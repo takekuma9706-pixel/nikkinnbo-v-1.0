@@ -25,7 +25,7 @@ export default function ShiftApp() {
   });
   useEffect(() => {
     localStorage.setItem(zoomKey, String(zoom));
-  }, [zoom]);
+  }, [zoom, zoomKey]);
 
   // 行数をブラウザに保存（行を空白にしても詰めない）
   const rowCountKey = `rowCount:${monthDate}`;
