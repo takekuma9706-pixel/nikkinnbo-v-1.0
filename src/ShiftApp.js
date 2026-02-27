@@ -2,11 +2,9 @@ import { supabase } from "./supabase";
 import { useEffect, useMemo, useState } from "react";
 
 export default function ShiftApp() {
-  // 固定（あとで月切替を入れられます）
   const year = 2026;
   const month = 1;
   const monthDate = `${year}-${String(month).padStart(2, "0")}-01`;
-
   const days = useMemo(() => new Date(year, month, 0).getDate(), [year, month]);
 
   // ✅ 表示順：16日スタート（16..月末, 1..15）
@@ -18,7 +16,18 @@ export default function ShiftApp() {
     return arr;
   }, [days]);
 
-  // 行数はブラウザに保存（行を空白にしても詰めない）
+  // ✅ ズーム（引きで見たい用）
+  const zoomKey = `zoom:${monthDate}`;
+  const [zoom, setZoom] = useState(() => {
+    const saved = Number(localStorage.getItem(zoomKey) || "0.85");
+    // 0.6〜1.2に制限
+    return Math.min(1.2, Math.max(0.6, saved));
+  });
+  useEffect(() => {
+    localStorage.setItem(zoomKey, String(zoom));
+  }, [zoom]);
+
+  // 行数をブラウザに保存（行を空白にしても詰めない）
   const rowCountKey = `rowCount:${monthDate}`;
   const initialRowCount = Math.max(
     5,
@@ -80,7 +89,7 @@ export default function ShiftApp() {
       .map(() => makeEmptyRow());
 
     for (const item of data || []) {
-      const slot = item.row_slot || 0; // 1..N
+      const slot = item.row_slot || 0;
       if (slot < 1 || slot > finalRowCount) continue;
       const rIndex = slot - 1;
 
@@ -105,7 +114,6 @@ export default function ShiftApp() {
     });
   };
 
-  // realDayIndex は 0..days-1（表示順ではなく本来の日付）
   const handleChange = (rowIndex, realDayIndex, value) => {
     setRows((prev) => {
       const next = [...prev];
@@ -119,7 +127,6 @@ export default function ShiftApp() {
 
   const addRow = () => setRowCount((c) => c + 1);
 
-  // 行は削除しない（詰めない）：中身だけクリア
   const clearRow = (rowIndex) => {
     setRows((prev) => {
       const next = [...prev];
@@ -128,7 +135,6 @@ export default function ShiftApp() {
     });
   };
 
-  // 更新＝保存（削除→再登録）→再読み込み
   const updateAll = async () => {
     setSaving(true);
 
@@ -144,14 +150,10 @@ export default function ShiftApp() {
     }
 
     const inserts = [];
-
     for (let r = 0; r < rows.length; r++) {
       const name = (rows[r].name || "").trim();
-
-      // 名前が空白なら保存しない（行は画面側で保持されるので詰まらない）
       if (!name) continue;
 
-      // 名前保持用（day=0）
       inserts.push({
         month: monthDate,
         row_slot: r + 1,
@@ -187,6 +189,8 @@ export default function ShiftApp() {
     setSaving(false);
     await loadData();
   };
+
+  const zoomPct = Math.round(zoom * 100);
 
   return (
     <div className="page">
@@ -232,15 +236,29 @@ export default function ShiftApp() {
           font-size: 14px;
           cursor: pointer;
         }
-        button:disabled {
-          opacity: .6;
-          cursor: not-allowed;
-        }
+        button:disabled { opacity: .6; cursor: not-allowed; }
+
         .hint {
           font-size: 12px;
           color: #444;
           margin-top: 6px;
+          display:flex;
+          gap: 10px;
+          align-items:center;
+          flex-wrap: wrap;
         }
+
+        .zoomBox{
+          display:flex;
+          gap: 8px;
+          align-items:center;
+          padding: 6px 10px;
+          border: 1px solid var(--border);
+          border-radius: 10px;
+          background: var(--bg2);
+        }
+        .zoomLabel{ font-size: 12px; color:#333; white-space:nowrap; }
+        .zoomValue{ font-size: 12px; font-weight: 600; width: 44px; text-align:right; }
 
         .tableWrap {
           margin-top: 10px;
@@ -249,6 +267,13 @@ export default function ShiftApp() {
           border: 1px solid var(--border);
           border-radius: 12px;
           background: var(--bg);
+        }
+
+        /* ✅ ここが「引き（縮小）」の本体：テーブル全体を縮小表示 */
+        .zoomStage{
+          transform: scale(${zoom});
+          transform-origin: top left;
+          display: inline-block;
         }
 
         table {
@@ -313,9 +338,7 @@ export default function ShiftApp() {
           cursor: pointer;
         }
 
-        .loading {
-          padding: 14px 6px;
-        }
+        .loading { padding: 14px 6px; }
 
         @media (max-width: 768px) {
           .page { padding: 10px; }
@@ -344,8 +367,29 @@ export default function ShiftApp() {
             </button>
           </div>
         </div>
+
         <div className="hint">
-          スマホは横スクロールできます。名前を空白にしても行は詰まりません。
+          <span>横スクロールできます。</span>
+
+          <span className="zoomBox">
+            <span className="zoomLabel">表示倍率</span>
+            <input
+              type="range"
+              min="0.3"
+              max="1.2"
+              step="0.05"
+              value={zoom}
+              onChange={(e) => setZoom(Number(e.target.value))}
+            />
+            <span className="zoomValue">{zoomPct}%</span>
+            <button
+              type="button"
+              onClick={() => setZoom(0.85)}
+              style={{ padding: "6px 10px" }}
+            >
+              既定
+            </button>
+          </span>
         </div>
       </div>
 
@@ -353,55 +397,57 @@ export default function ShiftApp() {
         <div className="loading">読み込み中...</div>
       ) : (
         <div className="tableWrap">
-          <table>
-            <thead>
-              <tr>
-                <th className="nameHeader nameCol">名前</th>
-                {displayOrder.map((day) => (
-                  <th key={day} className="dayCol">
-                    {day}
-                  </th>
-                ))}
-                <th className="ctlCol">操作</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {rows.map((row, rIndex) => (
-                <tr key={rIndex}>
-                  <td className="nameCell nameCol">
-                    <input
-                      className="nameInput"
-                      value={row.name}
-                      onChange={(e) => handleNameChange(rIndex, e.target.value)}
-                      placeholder="例：Aさん / 車輛A"
-                    />
-                  </td>
-
-                  {displayOrder.map((day) => {
-                    const realIndex = day - 1;
-                    return (
-                      <td key={day} className="dayCol">
-                        <textarea
-                          className="cellArea"
-                          value={row.days[realIndex]}
-                          onChange={(e) =>
-                            handleChange(rIndex, realIndex, e.target.value)
-                          }
-                        />
-                      </td>
-                    );
-                  })}
-
-                  <td className="ctlCol">
-                    <button className="ctlBtn" onClick={() => clearRow(rIndex)}>
-                      行クリア
-                    </button>
-                  </td>
+          <div className="zoomStage">
+            <table>
+              <thead>
+                <tr>
+                  <th className="nameHeader nameCol">名前</th>
+                  {displayOrder.map((day) => (
+                    <th key={day} className="dayCol">
+                      {day}
+                    </th>
+                  ))}
+                  <th className="ctlCol">操作</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+
+              <tbody>
+                {rows.map((row, rIndex) => (
+                  <tr key={rIndex}>
+                    <td className="nameCell nameCol">
+                      <input
+                        className="nameInput"
+                        value={row.name}
+                        onChange={(e) => handleNameChange(rIndex, e.target.value)}
+                        placeholder="例：Aさん / 車輛A"
+                      />
+                    </td>
+
+                    {displayOrder.map((day) => {
+                      const realIndex = day - 1;
+                      return (
+                        <td key={day} className="dayCol">
+                          <textarea
+                            className="cellArea"
+                            value={row.days[realIndex]}
+                            onChange={(e) =>
+                              handleChange(rIndex, realIndex, e.target.value)
+                            }
+                          />
+                        </td>
+                      );
+                    })}
+
+                    <td className="ctlCol">
+                      <button className="ctlBtn" onClick={() => clearRow(rIndex)}>
+                        行クリア
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
