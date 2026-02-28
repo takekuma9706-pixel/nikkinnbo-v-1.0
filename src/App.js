@@ -16,14 +16,12 @@ export default function ShiftApp() {
     return arr;
   }, [days]);
 
-  // ズーム
+  // ズーム（transformは使わない）
   const zoomKey = useMemo(() => `zoom:${monthDate}`, [monthDate]);
-
   const [zoom, setZoom] = useState(() => {
     const saved = Number(localStorage.getItem(zoomKey) || "1.0");
     return Math.min(1.2, Math.max(0.3, saved));
   });
-
   useEffect(() => {
     localStorage.setItem(zoomKey, String(zoom));
   }, [zoom, zoomKey]);
@@ -61,6 +59,7 @@ export default function ShiftApp() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  // 行数保存＆行追加（詰めない）
   useEffect(() => {
     localStorage.setItem(rowCountKey, String(rowCount));
     setRows((prev) => {
@@ -74,12 +73,18 @@ export default function ShiftApp() {
   const loadData = useCallback(async () => {
     setLoading(true);
 
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("schedule")
       .select("row_slot, row_name, day, text")
       .eq("month", monthDate)
       .order("row_slot", { ascending: true })
       .order("day", { ascending: true });
+
+    if (error) {
+      alert("読み込みエラー: " + error.message);
+      setLoading(false);
+      return;
+    }
 
     const maxSlotFromDb =
       (data || []).reduce((m, x) => Math.max(m, x.row_slot || 0), 0) || 0;
@@ -97,8 +102,9 @@ export default function ShiftApp() {
       const rIndex = slot - 1;
       if (item.row_name != null) newRows[rIndex].name = item.row_name ?? "";
 
-      if (item.day >= 1 && item.day <= days) {
-        newRows[rIndex].days[item.day - 1] = item.text ?? "";
+      const dayNum = item.day ?? 0;
+      if (dayNum >= 1 && dayNum <= days) {
+        newRows[rIndex].days[dayNum - 1] = item.text ?? "";
       }
     }
 
@@ -142,7 +148,13 @@ export default function ShiftApp() {
 
   const updateAll = async () => {
     setSaving(true);
-    await supabase.from("schedule").delete().eq("month", monthDate);
+
+    const del = await supabase.from("schedule").delete().eq("month", monthDate);
+    if (del.error) {
+      alert("削除でエラー: " + del.error.message);
+      setSaving(false);
+      return;
+    }
 
     const inserts = [];
     rows.forEach((row, r) => {
@@ -171,13 +183,21 @@ export default function ShiftApp() {
       });
     });
 
-    if (inserts.length) await supabase.from("schedule").insert(inserts);
+    if (inserts.length) {
+      const ins = await supabase.from("schedule").insert(inserts);
+      if (ins.error) {
+        alert("登録でエラー: " + ins.error.message);
+        setSaving(false);
+        return;
+      }
+    }
 
     alert("更新しました");
     setSaving(false);
     loadData();
   };
 
+  // ✅ 全文一致で色固定
   const textColorMap = useMemo(() => {
     const palette = [
       "#E3F2FD",
@@ -210,13 +230,24 @@ export default function ShiftApp() {
 
   const zoomPct = Math.round(zoom * 100);
 
+  // 黒枠（separateでも格子OK）
+  const cellBorder = "1px solid #000";
+
   return (
     <div style={{ padding: 12 }}>
-      <h2>{year}年 {month}月（16日スタート）</h2>
+      <h2>
+        {year}年 {month}月（16日スタート）
+      </h2>
 
       <div style={{ marginBottom: 10 }}>
-        <button onClick={updateAll} disabled={saving}>更新</button>
-        <button onClick={addRow} disabled={saving} style={{ marginLeft: 8 }}>
+        <button onClick={updateAll} disabled={loading || saving}>
+          更新
+        </button>
+        <button
+          onClick={addRow}
+          disabled={loading || saving}
+          style={{ marginLeft: 8 }}
+        >
           ＋行追加
         </button>
 
@@ -234,58 +265,153 @@ export default function ShiftApp() {
       {loading ? (
         <div>読み込み中...</div>
       ) : (
-        <div style={{ overflow: "auto", maxHeight: "70vh", border: "2px solid #000" }}>
+        <div
+          style={{
+            overflow: "auto",
+            maxHeight: "70vh",
+            border: "2px solid #000",
+            WebkitOverflowScrolling: "touch",
+          }}
+        >
           <table
             style={{
-              borderCollapse: "collapse",
+              borderCollapse: "separate",
+              borderSpacing: 0,
               width: "max-content",
               minWidth: "100%",
               fontSize: ui.font,
+              background: "#fff",
             }}
           >
             <thead>
               <tr>
-                <th style={{ border: "1px solid #000" }}>名前</th>
+                {/* 左上：最前面 */}
+                <th
+                  style={{
+                    position: "sticky",
+                    top: 0,
+                    left: 0,
+                    zIndex: 60,
+                    background: "#f1f3f5",
+                    width: ui.nameCol,
+                    minWidth: ui.nameCol,
+                    border: cellBorder,
+                    textAlign: "center",
+                  }}
+                >
+                  名前
+                </th>
+
+                {/* 日付ヘッダー：上固定 */}
                 {displayOrder.map((day) => (
-                  <th key={day} style={{ border: "1px solid #000" }}>
+                  <th
+                    key={day}
+                    style={{
+                      position: "sticky",
+                      top: 0,
+                      zIndex: 20,
+                      background: "#f1f3f5",
+                      width: ui.dayCol,
+                      minWidth: ui.dayCol,
+                      border: cellBorder,
+                      textAlign: "center",
+                    }}
+                  >
                     {day}
                   </th>
                 ))}
-                <th style={{ border: "1px solid #000" }}>操作</th>
+
+                <th
+                  style={{
+                    position: "sticky",
+                    top: 0,
+                    zIndex: 20,
+                    background: "#f1f3f5",
+                    width: ui.ctlCol,
+                    minWidth: ui.ctlCol,
+                    border: cellBorder,
+                    textAlign: "center",
+                  }}
+                >
+                  操作
+                </th>
               </tr>
             </thead>
+
             <tbody>
               {rows.map((row, rIndex) => (
                 <tr key={rIndex}>
-                  <td style={{ border: "1px solid #000" }}>
+                  {/* 名前列：左固定（ヘッダーより下だけど、日付ヘッダーより前に出す） */}
+                  <td
+                    style={{
+                      position: "sticky",
+                      left: 0,
+                      zIndex: 40,
+                      background: "#fff",
+                      width: ui.nameCol,
+                      minWidth: ui.nameCol,
+                      border: cellBorder,
+                    }}
+                  >
                     <input
                       value={row.name}
-                      onChange={(e) =>
-                        handleNameChange(rIndex, e.target.value)
-                      }
-                      style={{ width: "100%" }}
+                      onChange={(e) => handleNameChange(rIndex, e.target.value)}
+                      style={{
+                        width: "100%",
+                        padding: ui.pad,
+                        fontSize: ui.inputFont,
+                        border: "none",
+                        outline: "none",
+                        background: "transparent",
+                      }}
+                      placeholder="例：かぼちゃ"
                     />
                   </td>
 
+                  {/* 日付セル */}
                   {displayOrder.map((day) => {
                     const realIndex = day - 1;
                     const value = row.days[realIndex] || "";
-                    const bg = textColorMap[value?.trim()] || "transparent";
+                    const bg = textColorMap[value.trim()] || "transparent";
 
                     return (
-                      <td key={day} style={{ border: "1px solid #000", background: bg }}>
+                      <td
+                        key={day}
+                        style={{
+                          width: ui.dayCol,
+                          minWidth: ui.dayCol,
+                          border: cellBorder,
+                          background: bg,
+                        }}
+                      >
                         <textarea
                           value={value}
                           onChange={(e) =>
                             handleChange(rIndex, realIndex, e.target.value)
                           }
-                          style={{ width: "100%", background: "transparent" }}
+                          style={{
+                            width: "100%",
+                            height: ui.cellH,
+                            padding: ui.pad,
+                            fontSize: ui.inputFont,
+                            border: "none",
+                            outline: "none",
+                            resize: "none",
+                            background: "transparent",
+                          }}
                         />
                       </td>
                     );
                   })}
 
-                  <td style={{ border: "1px solid #000" }}>
+                  <td
+                    style={{
+                      width: ui.ctlCol,
+                      minWidth: ui.ctlCol,
+                      border: cellBorder,
+                      background: "#fff",
+                    }}
+                  >
                     <button onClick={() => clearRow(rIndex)}>行クリア</button>
                   </td>
                 </tr>
