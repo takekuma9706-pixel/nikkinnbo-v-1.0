@@ -1,5 +1,5 @@
 import { supabase } from "./supabase";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 export default function ShiftApp() {
   const year = 2026;
@@ -15,34 +15,34 @@ export default function ShiftApp() {
     return arr;
   }, [days]);
 
-  // ===== ズーム（※transform scaleはstickyと相性が悪いので使わない）=====
+  // ===== ズーム（transformは使わず、サイズで表現）=====
   const zoomKey = `zoom:${monthDate}`;
   const [zoom, setZoom] = useState(() => {
     const saved = Number(localStorage.getItem(zoomKey) || "0.85");
     return Math.min(1.2, Math.max(0.6, saved));
   });
-
   useEffect(() => {
     localStorage.setItem(zoomKey, String(zoom));
   }, [zoom, zoomKey]);
 
-  // ズームは「セル幅/文字サイズ」で表現（スマホstickyが安定）
   const ui = useMemo(() => {
-    const baseCell = 50;
+    const baseCell = 52;
     const baseFont = 14;
-    const baseName = 120;
+    const baseName = 140;
 
     return {
-      cellMinWidth: Math.round(baseCell * zoom),
+      cellW: Math.round(baseCell * zoom),
       fontSize: Math.round(baseFont * zoom),
-      nameColWidth: Math.round(baseName * zoom),
-      inputFontSize: Math.round(13 * zoom),
-      paddingY: Math.max(2, Math.round(4 * zoom)),
-      paddingX: Math.max(3, Math.round(6 * zoom)),
+      nameW: Math.round(baseName * zoom),
+      inputFont: Math.round(13 * zoom),
+      padY: Math.max(3, Math.round(6 * zoom)),
+      padX: Math.max(4, Math.round(8 * zoom)),
+      rowH: Math.max(30, Math.round(36 * zoom)),
+      headerBg: "#f1f3f5",
     };
   }, [zoom]);
 
-  // ===== 行数 =====
+  // ===== 行データ =====
   const initialRowCount = 20;
   const makeEmptyRow = () => ({ name: "", days: Array(days).fill("") });
 
@@ -94,7 +94,7 @@ export default function ShiftApp() {
     setLoading(false);
   };
 
-  // ===== 色分け =====
+  // ===== 色分け（短縮表示の1文字単位）=====
   const colorPalette = [
     "#E3F2FD",
     "#E8F5E9",
@@ -108,21 +108,17 @@ export default function ShiftApp() {
     "#ECEFF1",
   ];
 
-  // 「短縮表示の1文字」単位で色固定
   const textColorMap = useMemo(() => {
-    const uniqueKeys = new Set();
+    const keys = new Set();
     rows.forEach((row) => {
       row.days.forEach((text) => {
         const t = (text || "").trim();
         if (!t) return;
-        uniqueKeys.add(t.charAt(0));
+        keys.add(t.charAt(0));
       });
     });
-
     const map = {};
-    Array.from(uniqueKeys).forEach((key, index) => {
-      map[key] = colorPalette[index % colorPalette.length];
-    });
+    Array.from(keys).forEach((k, i) => (map[k] = colorPalette[i % colorPalette.length]));
     return map;
   }, [rows]);
 
@@ -144,10 +140,7 @@ export default function ShiftApp() {
   };
 
   const toggleExpand = (key) => {
-    setExpandedCells((prev) => ({
-      ...prev,
-      [key]: !prev[key],
-    }));
+    setExpandedCells((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
   const editCell = (rIndex, realIndex, currentValue) => {
@@ -206,21 +199,85 @@ export default function ShiftApp() {
     setSaving(false);
   };
 
-  // ★ 検索してもindexズレない
-  const rowsWithIndex = useMemo(
-    () => rows.map((row, index) => ({ row, index })),
-    [rows]
-  );
-
+  // ★ フィルタしてもindexズレない
+  const rowsWithIndex = useMemo(() => rows.map((row, index) => ({ row, index })), [rows]);
   const filteredRows = useMemo(() => {
     if (!query) return rowsWithIndex;
     return rowsWithIndex.filter(({ row }) => row.name.includes(query));
   }, [rowsWithIndex, query]);
 
+  // ===== スクロール同期（stickyに頼らない）=====
+  const headerRef = useRef(null); // 横スクロール用ヘッダー
+  const leftRef = useRef(null);   // 縦スクロール用名前列
+  const bodyRef = useRef(null);   // 本体（縦横スクロール）
+
+  const syncing = useRef(false);
+
+  const onBodyScroll = () => {
+    if (syncing.current) return;
+    syncing.current = true;
+    requestAnimationFrame(() => {
+      const body = bodyRef.current;
+      const header = headerRef.current;
+      const left = leftRef.current;
+      if (body && header) header.scrollLeft = body.scrollLeft;
+      if (body && left) left.scrollTop = body.scrollTop;
+      syncing.current = false;
+    });
+  };
+
+  const onHeaderScroll = () => {
+    if (syncing.current) return;
+    syncing.current = true;
+    requestAnimationFrame(() => {
+      const body = bodyRef.current;
+      const header = headerRef.current;
+      if (body && header) body.scrollLeft = header.scrollLeft;
+      syncing.current = false;
+    });
+  };
+
+  const onLeftScroll = () => {
+    if (syncing.current) return;
+    syncing.current = true;
+    requestAnimationFrame(() => {
+      const body = bodyRef.current;
+      const left = leftRef.current;
+      if (body && left) body.scrollTop = left.scrollTop;
+      syncing.current = false;
+    });
+  };
+
   const zoomPct = Math.round(zoom * 100);
 
-  // 固定ヘッダー色（少し濃い）
-  const headerBg = "#f1f3f5";
+  // 共通セルstyle
+  const cellBase = {
+    width: ui.cellW,
+    minWidth: ui.cellW,
+    height: ui.rowH,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontWeight: "bold",
+    boxSizing: "border-box",
+    borderRight: "1px solid #ddd",
+    borderBottom: "1px solid #ddd",
+    padding: `${ui.padY}px ${ui.padX}px`,
+    userSelect: "none",
+  };
+
+  const nameCellBase = {
+    width: ui.nameW,
+    minWidth: ui.nameW,
+    height: ui.rowH,
+    display: "flex",
+    alignItems: "center",
+    boxSizing: "border-box",
+    borderRight: "1px solid #ddd",
+    borderBottom: "1px solid #ddd",
+    padding: `${ui.padY}px ${ui.padX}px`,
+    background: "#fff",
+  };
 
   return (
     <div style={{ padding: 12 }}>
@@ -256,119 +313,143 @@ export default function ShiftApp() {
       ) : (
         <div
           style={{
-            overflow: "auto",
-            maxHeight: "80vh",
-            WebkitOverflowScrolling: "touch", // iOSでスクロールを滑らかに
             border: "1px solid #ddd",
+            borderRadius: 6,
+            overflow: "hidden",
           }}
         >
-          <table
-            border="1"
+          {/* 2x2レイアウト：
+              [左上] [上ヘッダー]
+              [左列] [本体]
+          */}
+          <div
             style={{
-              borderCollapse: "separate", // sticky安定のため（collapseだとiOSで崩れることあり）
-              borderSpacing: 0,
-              fontSize: ui.fontSize,
+              display: "grid",
+              gridTemplateColumns: `${ui.nameW}px 1fr`,
+              gridTemplateRows: `${ui.rowH}px 70vh`,
+              width: "100%",
             }}
           >
-            <thead>
-              <tr>
-                {/* 左上（名前ヘッダー） */}
-                <th
-                  style={{
-                    position: "sticky",
-                    top: 0,
-                    left: 0,
-                    background: headerBg,
-                    zIndex: 5,
-                    fontWeight: "bold",
-                    minWidth: ui.nameColWidth,
-                    padding: `${ui.paddingY}px ${ui.paddingX}px`,
-                  }}
-                >
-                  名前
-                </th>
+            {/* 左上（固定コーナー） */}
+            <div
+              style={{
+                background: ui.headerBg,
+                borderRight: "1px solid #ddd",
+                borderBottom: "1px solid #ddd",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontWeight: "bold",
+                fontSize: ui.fontSize,
+              }}
+            >
+              名前
+            </div>
 
-                {/* 日付ヘッダー */}
+            {/* 上ヘッダー（横スクロールだけ） */}
+            <div
+              ref={headerRef}
+              onScroll={onHeaderScroll}
+              style={{
+                overflowX: "auto",
+                overflowY: "hidden",
+                WebkitOverflowScrolling: "touch",
+                background: ui.headerBg,
+                borderBottom: "1px solid #ddd",
+              }}
+            >
+              <div style={{ display: "flex", width: ui.cellW * displayOrder.length }}>
                 {displayOrder.map((d) => (
-                  <th
+                  <div
                     key={d}
                     style={{
-                      position: "sticky",
-                      top: 0,
-                      background: headerBg,
-                      zIndex: 4,
-                      fontWeight: "bold",
-                      minWidth: ui.cellMinWidth,
-                      textAlign: "center",
-                      padding: `${ui.paddingY}px ${ui.paddingX}px`,
+                      ...cellBase,
+                      background: ui.headerBg,
+                      fontSize: ui.fontSize,
+                      borderTop: "0",
                     }}
                   >
                     {d}
-                  </th>
+                  </div>
                 ))}
-              </tr>
-            </thead>
+              </div>
+            </div>
 
-            <tbody>
-              {filteredRows.map(({ row, index: rIndex }) => (
-                <tr key={rIndex}>
-                  {/* 名前列（左固定） */}
-                  <td
-                    style={{
-                      position: "sticky",
-                      left: 0,
-                      background: "#fff",
-                      zIndex: 3,
-                      minWidth: ui.nameColWidth,
-                      padding: `${ui.paddingY}px ${ui.paddingX}px`,
-                    }}
-                  >
+            {/* 左列（縦スクロールだけ） */}
+            <div
+              ref={leftRef}
+              onScroll={onLeftScroll}
+              style={{
+                overflowY: "auto",
+                overflowX: "hidden",
+                WebkitOverflowScrolling: "touch",
+                background: "#fff",
+                borderRight: "1px solid #ddd",
+              }}
+            >
+              <div>
+                {filteredRows.map(({ row, index: rIndex }) => (
+                  <div key={rIndex} style={{ ...nameCellBase }}>
                     <input
                       value={row.name}
                       onChange={(e) => handleNameChange(rIndex, e.target.value)}
                       style={{
                         width: "100%",
-                        fontSize: ui.inputFontSize,
+                        fontSize: ui.inputFont,
                         boxSizing: "border-box",
                       }}
                     />
-                  </td>
+                  </div>
+                ))}
+              </div>
+            </div>
 
-                  {displayOrder.map((day) => {
-                    const realIndex = day - 1;
-                    const value = row.days[realIndex] || "";
+            {/* 本体（縦横スクロール） */}
+            <div
+              ref={bodyRef}
+              onScroll={onBodyScroll}
+              style={{
+                overflow: "auto",
+                WebkitOverflowScrolling: "touch",
+                background: "#fff",
+              }}
+            >
+              <div style={{ width: ui.cellW * displayOrder.length }}>
+                {filteredRows.map(({ row, index: rIndex }) => (
+                  <div key={rIndex} style={{ display: "flex" }}>
+                    {displayOrder.map((day) => {
+                      const realIndex = day - 1;
+                      const value = row.days[realIndex] || "";
 
-                    const keyChar = value.trim() ? value.trim().charAt(0) : "";
-                    const bg = keyChar ? textColorMap[keyChar] : "#fff";
-                    const shortText = keyChar;
+                      const keyChar = value.trim() ? value.trim().charAt(0) : "";
+                      const bg = keyChar ? textColorMap[keyChar] : "#fff";
+                      const shortText = keyChar;
 
-                    const cellKey = `${rIndex}-${realIndex}`;
-                    const expanded = !!expandedCells[cellKey];
+                      const cellKey = `${rIndex}-${realIndex}`;
+                      const expanded = !!expandedCells[cellKey];
 
-                    return (
-                      <td
-                        key={day}
-                        style={{
-                          background: bg,
-                          textAlign: "center",
-                          cursor: "pointer",
-                          fontWeight: "bold",
-                          minWidth: ui.cellMinWidth,
-                          padding: `${ui.paddingY}px ${ui.paddingX}px`,
-                          userSelect: "none",
-                        }}
-                        onClick={() => toggleExpand(cellKey)}
-                        onDoubleClick={() => editCell(rIndex, realIndex, value)}
-                        title="クリック: 展開 / ダブルクリック: 編集"
-                      >
-                        {expanded ? value : shortText}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                      return (
+                        <div
+                          key={day}
+                          style={{
+                            ...cellBase,
+                            background: bg,
+                            fontSize: ui.fontSize,
+                            cursor: "pointer",
+                          }}
+                          onClick={() => toggleExpand(cellKey)}
+                          onDoubleClick={() => editCell(rIndex, realIndex, value)}
+                          title="クリック: 展開 / ダブルクリック: 編集"
+                        >
+                          {expanded ? value : shortText}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
