@@ -120,7 +120,7 @@ export default function ShiftApp() {
     const map = {};
     Array.from(keys).forEach((k, i) => (map[k] = colorPalette[i % colorPalette.length]));
     return map;
-  }, [rows]);
+  }, [rows,colorPalette]);
 
   const handleChange = (r, d, val) => {
     setRows((prev) => {
