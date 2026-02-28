@@ -1,5 +1,5 @@
 import { supabase } from "./supabase";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 export default function ShiftApp() {
   const year = 2026;
@@ -7,6 +7,7 @@ export default function ShiftApp() {
   const monthDate = `${year}-${String(month).padStart(2, "0")}-01`;
   const days = useMemo(() => new Date(year, month, 0).getDate(), [year, month]);
 
+  // ✅ 表示順：16日スタート（16..月末, 1..15）
   const displayStartDay = 16;
   const displayOrder = useMemo(() => {
     const arr = [];
@@ -15,37 +16,24 @@ export default function ShiftApp() {
     return arr;
   }, [days]);
 
-  // ===== ズーム（transformは使わずサイズで表現）=====
+  // ✅ ズーム（引きで見たい用）
   const zoomKey = `zoom:${monthDate}`;
   const [zoom, setZoom] = useState(() => {
     const saved = Number(localStorage.getItem(zoomKey) || "0.85");
+    // 0.6〜1.2に制限
     return Math.min(1.2, Math.max(0.6, saved));
   });
   useEffect(() => {
     localStorage.setItem(zoomKey, String(zoom));
   }, [zoom, zoomKey]);
 
-  const ui = useMemo(() => {
-    const baseCell = 52;
-    const baseFont = 14;
-    const baseName = 140;
+  // 行数をブラウザに保存（行を空白にしても詰めない）
+  const rowCountKey = `rowCount:${monthDate}`;
+  const initialRowCount = Math.max(5, Number(localStorage.getItem(rowCountKey) || "5"));
 
-    return {
-      cellW: Math.round(baseCell * zoom),
-      fontSize: Math.round(baseFont * zoom),
-      nameW: Math.round(baseName * zoom),
-      inputFont: Math.round(13 * zoom),
-      padY: Math.max(3, Math.round(6 * zoom)),
-      padX: Math.max(4, Math.round(8 * zoom)),
-      rowH: Math.max(30, Math.round(36 * zoom)),
-      headerBg: "#f1f3f5",
-    };
-  }, [zoom]);
-
-  // ===== 行データ =====
-  const initialRowCount = 20;
   const makeEmptyRow = () => ({ name: "", days: Array(days).fill("") });
 
+  const [rowCount, setRowCount] = useState(initialRowCount);
   const [rows, setRows] = useState(
     Array(initialRowCount)
       .fill(0)
@@ -54,12 +42,22 @@ export default function ShiftApp() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [expandedCells, setExpandedCells] = useState({});
-  const [query, setQuery] = useState("");
+
+  // rowCount保存 + rowsを増やす（詰めない）
+  useEffect(() => {
+    localStorage.setItem(rowCountKey, String(rowCount));
+    setRows((prev) => {
+      if (prev.length >= rowCount) return prev;
+      const next = [...prev];
+      while (next.length < rowCount) next.push(makeEmptyRow());
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rowCount]);
 
   useEffect(() => {
     loadData();
-    // eslint-disable-next-line
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadData = async () => {
@@ -69,127 +67,113 @@ export default function ShiftApp() {
       .from("schedule")
       .select("row_slot, row_name, day, text")
       .eq("month", monthDate)
-      .order("row_slot", { ascending: true });
+      .order("row_slot", { ascending: true })
+      .order("day", { ascending: true });
 
     if (error) {
-      console.error(error);
-      alert("読み込み失敗");
+      alert("読み込みエラー: " + error.message);
       setLoading(false);
       return;
     }
 
-    const newRows = Array(initialRowCount)
+    const maxSlotFromDb =
+      (data || []).reduce((m, x) => Math.max(m, x.row_slot || 0), 0) || 0;
+
+    const finalRowCount = Math.max(5, rowCount, maxSlotFromDb);
+
+    const newRows = Array(finalRowCount)
       .fill(0)
       .map(() => makeEmptyRow());
 
     for (const item of data || []) {
-      const r = (item.row_slot || 1) - 1;
-      if (!newRows[r]) continue;
-      newRows[r].name = item.row_name || "";
-      if (item.day > 0) newRows[r].days[item.day - 1] = item.text || "";
+      const slot = item.row_slot || 0;
+      if (slot < 1 || slot > finalRowCount) continue;
+      const rIndex = slot - 1;
+
+      if (item.row_name != null) newRows[rIndex].name = item.row_name ?? "";
+
+      const dayNum = item.day ?? 0;
+      if (dayNum >= 1 && dayNum <= days) {
+        newRows[rIndex].days[dayNum - 1] = item.text ?? "";
+      }
     }
 
+    setRowCount(finalRowCount);
     setRows(newRows);
-    setExpandedCells({});
     setLoading(false);
   };
 
-  // ===== 色分け（短縮表示の1文字単位）=====
-  const colorPalette = [
-    "#E3F2FD",
-    "#E8F5E9",
-    "#FFF3E0",
-    "#F3E5F5",
-    "#E0F7FA",
-    "#FCE4EC",
-    "#F1F8E9",
-    "#EDE7F6",
-    "#FFF8E1",
-    "#ECEFF1",
-  ];
-
-  const textColorMap = useMemo(() => {
-    const keys = new Set();
-    rows.forEach((row) => {
-      row.days.forEach((text) => {
-        const t = (text || "").trim();
-        if (!t) return;
-        keys.add(t.charAt(0));
-      });
-    });
-    const map = {};
-    Array.from(keys).forEach((k, i) => (map[k] = colorPalette[i % colorPalette.length]));
-    return map;
-  }, [rows,colorPalette]);
-
-  const handleChange = (r, d, val) => {
+  const handleNameChange = (rowIndex, value) => {
     setRows((prev) => {
       const next = [...prev];
-      next[r] = { ...next[r], days: [...next[r].days] };
-      next[r].days[d] = val;
+      next[rowIndex] = { ...next[rowIndex], name: value };
       return next;
     });
   };
 
-  const handleNameChange = (r, val) => {
+  const handleChange = (rowIndex, realDayIndex, value) => {
     setRows((prev) => {
       const next = [...prev];
-      next[r] = { ...next[r], name: val };
+      next[rowIndex] = { ...next[rowIndex] };
+      const dayArr = [...next[rowIndex].days];
+      dayArr[realDayIndex] = value;
+      next[rowIndex].days = dayArr;
       return next;
     });
   };
 
-  const toggleExpand = (key) => {
-    setExpandedCells((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
+  const addRow = () => setRowCount((c) => c + 1);
 
-  const editCell = (rIndex, realIndex, currentValue) => {
-    const next = window.prompt("入力", currentValue ?? "");
-    if (next === null) return;
-    handleChange(rIndex, realIndex, next);
+  const clearRow = (rowIndex) => {
+    setRows((prev) => {
+      const next = [...prev];
+      next[rowIndex] = makeEmptyRow();
+      return next;
+    });
   };
 
   const updateAll = async () => {
     setSaving(true);
 
-    const del = await supabase.from("schedule").delete().eq("month", monthDate);
-    if (del.error) {
-      console.error(del.error);
-      alert("更新に失敗しました（削除）");
+    const { error: delError } = await supabase.from("schedule").delete().eq("month", monthDate);
+
+    if (delError) {
+      alert("削除でエラー: " + delError.message);
       setSaving(false);
       return;
     }
 
     const inserts = [];
-    rows.forEach((row, rIndex) => {
-      if (!row.name.trim()) return;
+    for (let r = 0; r < rows.length; r++) {
+      const name = (rows[r].name || "").trim();
+      if (!name) continue;
 
       inserts.push({
         month: monthDate,
-        row_slot: rIndex + 1,
-        row_name: row.name,
+        row_slot: r + 1,
+        row_name: name,
         day: 0,
         text: "",
       });
 
-      row.days.forEach((text, dIndex) => {
-        const t = (text || "").trim();
-        if (!t) return;
+      for (let d = 0; d < rows[r].days.length; d++) {
+        const text = (rows[r].days[d] || "").trim();
+        if (!text) continue;
+
         inserts.push({
           month: monthDate,
-          row_slot: rIndex + 1,
-          row_name: row.name,
-          day: dIndex + 1,
-          text: t,
+          row_slot: r + 1,
+          row_name: name,
+          day: d + 1,
+          text,
         });
-      });
-    });
+      }
+    }
 
-    if (inserts.length) {
-      const ins = await supabase.from("schedule").insert(inserts);
-      if (ins.error) {
-        console.error(ins.error);
-        alert("更新に失敗しました（保存）");
+    if (inserts.length > 0) {
+      const { error: insError } = await supabase.from("schedule").insert(inserts);
+      if (insError) {
+        alert("登録でエラー: " + insError.message);
         setSaving(false);
         return;
       }
@@ -197,281 +181,300 @@ export default function ShiftApp() {
 
     alert("更新しました");
     setSaving(false);
+    await loadData();
   };
 
-  // ★ フィルタしてもindexズレない
-  const rowsWithIndex = useMemo(() => rows.map((row, index) => ({ row, index })), [rows]);
-  const filteredRows = useMemo(() => {
-    if (!query) return rowsWithIndex;
-    return rowsWithIndex.filter(({ row }) => row.name.includes(query));
-  }, [rowsWithIndex, query]);
+  // ✅ ESLint対策：colorPaletteはuseMemoの中で定義（依存に含めなくて良い）
+  const textColorMap = useMemo(() => {
+    const colorPalette = [
+      "#E3F2FD",
+      "#E8F5E9",
+      "#FFF3E0",
+      "#F3E5F5",
+      "#E0F7FA",
+      "#FCE4EC",
+      "#F1F8E9",
+      "#EDE7F6",
+      "#FFF8E1",
+      "#ECEFF1",
+    ];
 
-  // ===== スクロール同期（上：日付行 / 左：名前列 / 本体：縦横）=====
-  const headerRef = useRef(null);
-  const leftRef = useRef(null);
-  const bodyRef = useRef(null);
-  const syncing = useRef(false);
-
-  const onBodyScroll = () => {
-    if (syncing.current) return;
-    syncing.current = true;
-    requestAnimationFrame(() => {
-      const body = bodyRef.current;
-      const header = headerRef.current;
-      const left = leftRef.current;
-
-      if (body && header) {
-        header.scrollLeft = body.scrollLeft;
-        const fixed = header.scrollLeft;
-        if (body.scrollLeft !== fixed) body.scrollLeft = fixed;
-      }
-      if (body && left) {
-        left.scrollTop = body.scrollTop;
-        const fixedTop = left.scrollTop;
-        if (body.scrollTop !== fixedTop) body.scrollTop = fixedTop;
-      }
-      syncing.current = false;
+    const keys = new Set();
+    rows.forEach((row) => {
+      row.days.forEach((t) => {
+        const s = (t || "").trim();
+        if (!s) return;
+        keys.add(s.charAt(0)); // 1文字単位で色固定
+      });
     });
-  };
 
-  const onHeaderScroll = () => {
-    if (syncing.current) return;
-    syncing.current = true;
-    requestAnimationFrame(() => {
-      const body = bodyRef.current;
-      const header = headerRef.current;
-      if (body && header) {
-        body.scrollLeft = header.scrollLeft;
-        const fixed = body.scrollLeft;
-        if (header.scrollLeft !== fixed) header.scrollLeft = fixed;
-      }
-      syncing.current = false;
+    const map = {};
+    Array.from(keys).forEach((k, i) => {
+      map[k] = colorPalette[i % colorPalette.length];
     });
-  };
 
-  const onLeftScroll = () => {
-    if (syncing.current) return;
-    syncing.current = true;
-    requestAnimationFrame(() => {
-      const body = bodyRef.current;
-      const left = leftRef.current;
-      if (body && left) {
-        body.scrollTop = left.scrollTop;
-        const fixedTop = body.scrollTop;
-        if (left.scrollTop !== fixedTop) left.scrollTop = fixedTop;
-      }
-      syncing.current = false;
-    });
-  };
+    return map;
+  }, [rows]);
 
   const zoomPct = Math.round(zoom * 100);
 
-  const cellBase = {
-    width: ui.cellW,
-    minWidth: ui.cellW,
-    height: ui.rowH,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontWeight: "bold",
-    boxSizing: "border-box",
-    borderRight: "1px solid #ddd",
-    borderBottom: "1px solid #ddd",
-    padding: `${ui.padY}px ${ui.padX}px`,
-    userSelect: "none",
-  };
-
-  const nameCellBase = {
-    width: ui.nameW,
-    minWidth: ui.nameW,
-    height: ui.rowH,
-    display: "flex",
-    alignItems: "center",
-    boxSizing: "border-box",
-    borderRight: "1px solid #ddd",
-    borderBottom: "1px solid #ddd",
-    padding: `${ui.padY}px ${ui.padX}px`,
-    background: "#fff",
-  };
-
-  const bodyWidth = ui.cellW * displayOrder.length;
-
   return (
-    <div style={{ padding: 12 }}>
-      <h2>
-        {year}年 {month}月（16日スタート）
-      </h2>
+    <div className="page">
+      <style>{`
+        :root{
+          --border:#cfcfcf;
+          --bg:#ffffff;
+          --bg2:#f7f7f7;
+          --text:#111;
+        }
+        * { box-sizing: border-box; }
+        body { margin:0; color:var(--text); background:var(--bg); }
+        .page { padding: 12px; }
 
-      <div style={{ marginBottom: 10 }}>
-        <button onClick={updateAll} disabled={saving}>
-          更新
-        </button>
+        .topbar {
+          position: sticky;
+          top: 0;
+          z-index: 50;
+          background: var(--bg);
+          padding: 10px 0 10px 0;
+          border-bottom: 1px solid var(--border);
+        }
+        .titleRow {
+          display:flex;
+          align-items:center;
+          justify-content: space-between;
+          gap: 10px;
+          flex-wrap: wrap;
+        }
+        h2 { margin: 0; font-size: 18px; }
 
-        <input
-          style={{ marginLeft: 10 }}
-          placeholder="名前検索"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
+        .actions {
+          display:flex;
+          gap: 8px;
+          align-items:center;
+          flex-wrap: wrap;
+        }
+        button {
+          padding: 10px 12px;
+          border: 1px solid var(--border);
+          background: var(--bg2);
+          border-radius: 10px;
+          font-size: 14px;
+          cursor: pointer;
+        }
+        button:disabled { opacity: .6; cursor: not-allowed; }
 
-        <span style={{ marginLeft: 15 }}>表示倍率 {zoomPct}%</span>
-        <input
-          type="range"
-          min="0.6"
-          max="1.2"
-          step="0.05"
-          value={zoom}
-          onChange={(e) => setZoom(Number(e.target.value))}
-        />
+        .hint {
+          font-size: 12px;
+          color: #444;
+          margin-top: 6px;
+          display:flex;
+          gap: 10px;
+          align-items:center;
+          flex-wrap: wrap;
+        }
+
+        .zoomBox{
+          display:flex;
+          gap: 8px;
+          align-items:center;
+          padding: 6px 10px;
+          border: 1px solid var(--border);
+          border-radius: 10px;
+          background: var(--bg2);
+        }
+        .zoomLabel{ font-size: 12px; color:#333; white-space:nowrap; }
+        .zoomValue{ font-size: 12px; font-weight: 600; width: 44px; text-align:right; }
+
+        .tableWrap {
+          margin-top: 10px;
+          overflow-x: auto;
+          -webkit-overflow-scrolling: touch;
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          background: var(--bg);
+        }
+
+        /* ✅ 引き（縮小）表示 */
+        .zoomStage{
+          transform: scale(${zoom});
+          transform-origin: top left;
+          display: inline-block;
+        }
+
+        table {
+          border-collapse: collapse;
+          width: max-content;
+          min-width: 100%;
+        }
+
+        th, td {
+          border: 1px solid var(--border);
+          padding: 0;
+          vertical-align: top;
+          background: var(--bg);
+        }
+
+        thead th {
+          position: sticky;
+          top: 61px;
+          z-index: 20;
+          background: var(--bg2);
+          font-weight: 600;
+        }
+
+        .nameHeader, .nameCell {
+          position: sticky;
+          left: 0;
+          z-index: 30;
+          background: var(--bg2);
+        }
+        .nameCell { background: var(--bg); }
+
+        .nameCol { width: 160px; min-width: 160px; max-width: 160px; }
+        .dayCol  { width: 84px; min-width: 84px; }
+        .ctlCol  { width: 90px; min-width: 90px; }
+
+        .nameInput {
+          width: 100%;
+          border: none;
+          outline: none;
+          padding: 8px;
+          font-size: 14px;
+          background: transparent;
+        }
+
+        .cellArea {
+          width: 100%;
+          height: 70px;
+          border: none;
+          outline: none;
+          resize: none;
+          padding: 8px;
+          font-size: 14px;
+          background: transparent;
+        }
+
+        .ctlBtn {
+          width: 100%;
+          border: none;
+          background: transparent;
+          padding: 10px 8px;
+          font-size: 13px;
+          cursor: pointer;
+        }
+
+        .loading { padding: 14px 6px; }
+
+        @media (max-width: 768px) {
+          .page { padding: 10px; }
+          h2 { font-size: 16px; }
+          button { padding: 12px 14px; font-size: 15px; }
+          thead th { top: 63px; }
+          .nameCol { width: 150px; min-width: 150px; max-width: 150px; }
+          .dayCol { width: 84px; min-width: 84px; }
+          .cellArea { height: 74px; font-size: 15px; }
+          .nameInput { font-size: 15px; }
+        }
+      `}</style>
+
+      <div className="topbar">
+        <div className="titleRow">
+          <h2>
+            {year}年 {month}月（16日スタート）
+          </h2>
+
+          <div className="actions">
+            <button onClick={updateAll} disabled={loading || saving}>
+              更新
+            </button>
+            <button onClick={addRow} disabled={loading || saving}>
+              ＋行追加
+            </button>
+          </div>
+        </div>
+
+        <div className="hint">
+          <span>横スクロールできます。</span>
+
+          <span className="zoomBox">
+            <span className="zoomLabel">表示倍率</span>
+            <input
+              type="range"
+              min="0.3"
+              max="1.2"
+              step="0.05"
+              value={zoom}
+              onChange={(e) => setZoom(Number(e.target.value))}
+            />
+            <span className="zoomValue">{zoomPct}%</span>
+            <button
+              type="button"
+              onClick={() => setZoom(0.85)}
+              style={{ padding: "6px 10px" }}
+            >
+              既定
+            </button>
+          </span>
+        </div>
       </div>
 
       {loading ? (
-        <div>読み込み中...</div>
+        <div className="loading">読み込み中...</div>
       ) : (
-        <div style={{ border: "1px solid #ddd", borderRadius: 6, overflow: "hidden" }}>
-          {/* ✅ 日付行（16..15）を「画面に対して常時表示」 */}
-          <div
-            style={{
-              position: "sticky",
-              top: 0,
-              zIndex: 999,
-              background: ui.headerBg,
-            }}
-          >
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: `${ui.nameW}px 1fr`,
-                gridTemplateRows: `${ui.rowH}px`,
-                width: "100%",
-              }}
-            >
-              {/* 左上 */}
-              <div
-                style={{
-                  background: ui.headerBg,
-                  borderRight: "1px solid #ddd",
-                  borderBottom: "1px solid #ddd",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontWeight: "bold",
-                  fontSize: ui.fontSize,
-                }}
-              >
-                名前
-              </div>
-
-              {/* 日付行（横スクロールのみ） */}
-              <div
-                ref={headerRef}
-                onScroll={onHeaderScroll}
-                style={{
-                  overflowX: "auto",
-                  overflowY: "hidden",
-                  WebkitOverflowScrolling: "touch",
-                  background: ui.headerBg,
-                  borderBottom: "1px solid #ddd",
-                  overscrollBehavior: "contain",
-                }}
-              >
-                <div style={{ display: "flex", width: bodyWidth }}>
-                  {displayOrder.map((d) => (
-                    <div
-                      key={d}
-                      style={{
-                        ...cellBase,
-                        background: ui.headerBg,
-                        fontSize: ui.fontSize,
-                      }}
-                    >
-                      {d}
-                    </div>
+        <div className="tableWrap">
+          <div className="zoomStage">
+            <table>
+              <thead>
+                <tr>
+                  <th className="nameHeader nameCol">名前</th>
+                  {displayOrder.map((day) => (
+                    <th key={day} className="dayCol">
+                      {day}
+                    </th>
                   ))}
-                </div>
-              </div>
-            </div>
-          </div>
+                  <th className="ctlCol">操作</th>
+                </tr>
+              </thead>
 
-          {/* 下段：名前列＋本体（ここをスクロールしても日付行は残る） */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: `${ui.nameW}px 1fr`,
-              gridTemplateRows: `70vh`,
-              width: "100%",
-            }}
-          >
-            {/* 名前列（縦スクロール） */}
-            <div
-              ref={leftRef}
-              onScroll={onLeftScroll}
-              style={{
-                overflowY: "auto",
-                overflowX: "hidden",
-                WebkitOverflowScrolling: "touch",
-                background: "#fff",
-                borderRight: "1px solid #ddd",
-                overscrollBehavior: "contain",
-              }}
-            >
-              {filteredRows.map(({ row, index: rIndex }) => (
-                <div key={rIndex} style={{ ...nameCellBase }}>
-                  <input
-                    value={row.name}
-                    onChange={(e) => handleNameChange(rIndex, e.target.value)}
-                    style={{ width: "100%", fontSize: ui.inputFont, boxSizing: "border-box" }}
-                  />
-                </div>
-              ))}
-            </div>
+              <tbody>
+                {rows.map((row, rIndex) => (
+                  <tr key={rIndex}>
+                    <td className="nameCell nameCol">
+                      <input
+                        className="nameInput"
+                        value={row.name}
+                        onChange={(e) => handleNameChange(rIndex, e.target.value)}
+                        placeholder="例：Aさん / 車輛A"
+                      />
+                    </td>
 
-            {/* 本体（縦横スクロール） */}
-            <div
-              ref={bodyRef}
-              onScroll={onBodyScroll}
-              style={{
-                overflow: "auto",
-                WebkitOverflowScrolling: "touch",
-                background: "#fff",
-                overscrollBehavior: "contain",
-              }}
-            >
-              <div style={{ width: bodyWidth }}>
-                {filteredRows.map(({ row, index: rIndex }) => (
-                  <div key={rIndex} style={{ display: "flex" }}>
                     {displayOrder.map((day) => {
                       const realIndex = day - 1;
-                      const value = row.days[realIndex] || "";
-
-                      const keyChar = value.trim() ? value.trim().charAt(0) : "";
-                      const bg = keyChar ? textColorMap[keyChar] : "#fff";
-                      const shortText = keyChar;
-
-                      const cellKey = `${rIndex}-${realIndex}`;
-                      const expanded = !!expandedCells[cellKey];
+                      const v = row.days[realIndex] || "";
+                      const keyChar = v.trim() ? v.trim().charAt(0) : "";
+                      const bg = keyChar ? textColorMap[keyChar] : "transparent";
 
                       return (
-                        <div
-                          key={day}
-                          style={{
-                            ...cellBase,
-                            background: bg,
-                            fontSize: ui.fontSize,
-                            cursor: "pointer",
-                          }}
-                          onClick={() => toggleExpand(cellKey)}
-                          onDoubleClick={() => editCell(rIndex, realIndex, value)}
-                          title="クリック: 展開 / ダブルクリック: 編集"
-                        >
-                          {expanded ? value : shortText}
-                        </div>
+                        <td key={day} className="dayCol" style={{ background: bg }}>
+                          <textarea
+                            className="cellArea"
+                            value={v}
+                            onChange={(e) => handleChange(rIndex, realIndex, e.target.value)}
+                          />
+                        </td>
                       );
                     })}
-                  </div>
+
+                    <td className="ctlCol">
+                      <button className="ctlBtn" onClick={() => clearRow(rIndex)}>
+                        行クリア
+                      </button>
+                    </td>
+                  </tr>
                 ))}
-              </div>
-            </div>
+              </tbody>
+            </table>
           </div>
         </div>
       )}
