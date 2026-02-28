@@ -16,42 +16,31 @@ export default function ShiftApp() {
     return arr;
   }, [days]);
 
-  // ✅ ズーム（transformは使わず、各サイズを倍率で変える）
+  // ✅ ズーム（transformは使わずサイズで表現）
   const zoomKey = `zoom:${monthDate}`;
   const [zoom, setZoom] = useState(() => {
-    const saved = Number(localStorage.getItem(zoomKey) || "0.85");
+    const saved = Number(localStorage.getItem(zoomKey) || "1.0");
     return Math.min(1.2, Math.max(0.3, saved));
   });
   useEffect(() => {
     localStorage.setItem(zoomKey, String(zoom));
   }, [zoom, zoomKey]);
 
-  // ✅ 0.3でも成立するように下限をかなり下げる
+  // ✅ 0.3でも成立するように下限を下げる
   const ui = useMemo(() => {
     const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
 
-    // ベース値
     const nameCol = Math.round(160 * zoom);
     const dayCol = Math.round(84 * zoom);
     const ctlCol = Math.round(90 * zoom);
 
-    // 30%のときでも実用になる下限にする
     return {
-      // topbar高さ（端末で違うので“概算”。必要なら微調整）
-      topbarH: 61,
-
-      // 列幅
-      nameCol: clamp(nameCol, 72, 260), // 0.3でも「最低72px」
-      dayCol: clamp(dayCol, 34, 160),   // 0.3でも「最低34px」
-      ctlCol: clamp(ctlCol, 44, 180),   // 0.3でも「最低44px」
-
-      // セル高さ・フォント・余白
+      nameCol: clamp(nameCol, 72, 260),
+      dayCol: clamp(dayCol, 34, 160),
+      ctlCol: clamp(ctlCol, 44, 180),
       cellH: clamp(Math.round(70 * zoom), 26, 150),
       font: clamp(Math.round(14 * zoom), 9, 20),
-      fontSmall: clamp(Math.round(12 * zoom), 8, 18),
       pad: clamp(Math.round(8 * zoom), 2, 16),
-
-      // 入力は小さすぎると触れないので下限を別に確保（タップ性）
       inputFont: clamp(Math.round(14 * zoom), 10, 20),
     };
   }, [zoom]);
@@ -163,7 +152,6 @@ export default function ShiftApp() {
     setSaving(true);
 
     const { error: delError } = await supabase.from("schedule").delete().eq("month", monthDate);
-
     if (delError) {
       alert("削除でエラー: " + delError.message);
       setSaving(false);
@@ -219,7 +207,7 @@ export default function ShiftApp() {
         :root{
           --border:#cfcfcf;
           --bg:#ffffff;
-          --bg2:#f7f7f7;
+          --bg2:#f1f3f5;
           --text:#111;
         }
         * { box-sizing: border-box; }
@@ -229,7 +217,7 @@ export default function ShiftApp() {
         .topbar {
           position: sticky;
           top: 0;
-          z-index: 50;
+          z-index: 1000;
           background: var(--bg);
           padding: 10px 0 10px 0;
           border-bottom: 1px solid var(--border);
@@ -252,7 +240,7 @@ export default function ShiftApp() {
         button {
           padding: 10px 12px;
           border: 1px solid var(--border);
-          background: var(--bg2);
+          background: #f7f7f7;
           border-radius: 10px;
           font-size: 14px;
           cursor: pointer;
@@ -276,14 +264,16 @@ export default function ShiftApp() {
           padding: 6px 10px;
           border: 1px solid var(--border);
           border-radius: 10px;
-          background: var(--bg2);
+          background: #f7f7f7;
         }
         .zoomLabel{ font-size: 12px; color:#333; white-space:nowrap; }
         .zoomValue{ font-size: 12px; font-weight: 600; width: 44px; text-align:right; }
 
+        /* ✅ 重要：縦横スクロールをこの中で完結させる（stickyが安定する） */
         .tableWrap {
           margin-top: 10px;
-          overflow-x: auto;
+          overflow: auto;
+          max-height: 70vh;
           -webkit-overflow-scrolling: touch;
           border: 1px solid var(--border);
           border-radius: 12px;
@@ -291,38 +281,49 @@ export default function ShiftApp() {
         }
 
         table {
-          border-collapse: collapse;
+          border-collapse: separate; /* ✅ sticky安定 */
+          border-spacing: 0;
           width: max-content;
           min-width: 100%;
           font-size: ${ui.font}px;
         }
 
         th, td {
-          border: 1px solid var(--border);
+          border-right: 1px solid var(--border);
+          border-bottom: 1px solid var(--border);
           padding: 0;
           vertical-align: top;
           background: var(--bg);
         }
+        /* 左端と上端の線 */
+        table tr > *:first-child { border-left: 1px solid var(--border); }
+        thead tr:first-child > * { border-top: 1px solid var(--border); }
 
+        /* ✅ 日付ヘッダー（追従） */
         thead th {
           position: sticky;
-          top: ${ui.topbarH}px;
+          top: 0;               /* ← tableWrap内で固定 */
           z-index: 20;
           background: var(--bg2);
-          font-weight: 600;
+          font-weight: 700;
+          text-align: center;
         }
 
+        /* ✅ 名前列（追従） */
         .nameHeader, .nameCell {
           position: sticky;
           left: 0;
           z-index: 30;
           background: var(--bg2);
         }
-        .nameCell { background: var(--bg); }
+        .nameCell { background: var(--bg); z-index: 40; } /* ← 日付より手前に */
+
+        /* ✅ 左上（名前ヘッダー）は最前面 */
+        .nameHeader { z-index: 60; }
 
         .nameCol { width: ${ui.nameCol}px; min-width: ${ui.nameCol}px; max-width: ${ui.nameCol}px; }
-        .dayCol  { width: ${ui.dayCol}px; min-width: ${ui.dayCol}px; }
-        .ctlCol  { width: ${ui.ctlCol}px; min-width: ${ui.ctlCol}px; }
+        .dayCol  { width: ${ui.dayCol}px;  min-width: ${ui.dayCol}px; }
+        .ctlCol  { width: ${ui.ctlCol}px;  min-width: ${ui.ctlCol}px; }
 
         .nameInput {
           width: 100%;
@@ -349,7 +350,7 @@ export default function ShiftApp() {
           border: none;
           background: transparent;
           padding: 10px 8px;
-          font-size: ${ui.fontSmall}px;
+          font-size: ${Math.max(8, ui.font - 1)}px;
           cursor: pointer;
         }
 
@@ -359,7 +360,7 @@ export default function ShiftApp() {
           .page { padding: 10px; }
           h2 { font-size: 16px; }
           button { padding: 12px 14px; font-size: 15px; }
-          thead th { top: ${ui.topbarH + 2}px; }
+          .tableWrap { max-height: 72vh; }
         }
       `}</style>
 
@@ -380,7 +381,7 @@ export default function ShiftApp() {
         </div>
 
         <div className="hint">
-          <span>横スクロールできます。</span>
+          <span>表の中を縦横スクロールできます。</span>
 
           <span className="zoomBox">
             <span className="zoomLabel">表示倍率</span>
@@ -393,18 +394,10 @@ export default function ShiftApp() {
               onChange={(e) => setZoom(Number(e.target.value))}
             />
             <span className="zoomValue">{zoomPct}%</span>
-            <button
-              type="button"
-              onClick={() => setZoom(0.3)}
-              style={{ padding: "6px 10px" }}
-            >
+            <button type="button" onClick={() => setZoom(0.3)} style={{ padding: "6px 10px" }}>
               30%
             </button>
-            <button
-              type="button"
-              onClick={() => setZoom(1.0)}
-              style={{ padding: "6px 10px" }}
-            >
+            <button type="button" onClick={() => setZoom(1.0)} style={{ padding: "6px 10px" }}>
               100%
             </button>
           </span>
@@ -436,7 +429,7 @@ export default function ShiftApp() {
                       className="nameInput"
                       value={row.name}
                       onChange={(e) => handleNameChange(rIndex, e.target.value)}
-                      placeholder="例：Aさん / 車輛A"
+                      placeholder="例：かぼちゃ"
                     />
                   </td>
 
