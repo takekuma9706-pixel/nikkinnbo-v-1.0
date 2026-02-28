@@ -16,16 +16,45 @@ export default function ShiftApp() {
     return arr;
   }, [days]);
 
-  // ✅ ズーム（引きで見たい用）
+  // ✅ ズーム（transformは使わず、各サイズを倍率で変える）
   const zoomKey = `zoom:${monthDate}`;
   const [zoom, setZoom] = useState(() => {
     const saved = Number(localStorage.getItem(zoomKey) || "0.85");
-    // 0.6〜1.2に制限
-    return Math.min(1.2, Math.max(0.6, saved));
+    return Math.min(1.2, Math.max(0.3, saved));
   });
   useEffect(() => {
     localStorage.setItem(zoomKey, String(zoom));
   }, [zoom, zoomKey]);
+
+  // ✅ 0.3でも成立するように下限をかなり下げる
+  const ui = useMemo(() => {
+    const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
+
+    // ベース値
+    const nameCol = Math.round(160 * zoom);
+    const dayCol = Math.round(84 * zoom);
+    const ctlCol = Math.round(90 * zoom);
+
+    // 30%のときでも実用になる下限にする
+    return {
+      // topbar高さ（端末で違うので“概算”。必要なら微調整）
+      topbarH: 61,
+
+      // 列幅
+      nameCol: clamp(nameCol, 72, 260), // 0.3でも「最低72px」
+      dayCol: clamp(dayCol, 34, 160),   // 0.3でも「最低34px」
+      ctlCol: clamp(ctlCol, 44, 180),   // 0.3でも「最低44px」
+
+      // セル高さ・フォント・余白
+      cellH: clamp(Math.round(70 * zoom), 26, 150),
+      font: clamp(Math.round(14 * zoom), 9, 20),
+      fontSmall: clamp(Math.round(12 * zoom), 8, 18),
+      pad: clamp(Math.round(8 * zoom), 2, 16),
+
+      // 入力は小さすぎると触れないので下限を別に確保（タップ性）
+      inputFont: clamp(Math.round(14 * zoom), 10, 20),
+    };
+  }, [zoom]);
 
   // 行数をブラウザに保存（行を空白にしても詰めない）
   const rowCountKey = `rowCount:${monthDate}`;
@@ -76,9 +105,7 @@ export default function ShiftApp() {
       return;
     }
 
-    const maxSlotFromDb =
-      (data || []).reduce((m, x) => Math.max(m, x.row_slot || 0), 0) || 0;
-
+    const maxSlotFromDb = (data || []).reduce((m, x) => Math.max(m, x.row_slot || 0), 0) || 0;
     const finalRowCount = Math.max(5, rowCount, maxSlotFromDb);
 
     const newRows = Array(finalRowCount)
@@ -184,38 +211,6 @@ export default function ShiftApp() {
     await loadData();
   };
 
-  // ✅ ESLint対策：colorPaletteはuseMemoの中で定義（依存に含めなくて良い）
-  const textColorMap = useMemo(() => {
-    const colorPalette = [
-      "#E3F2FD",
-      "#E8F5E9",
-      "#FFF3E0",
-      "#F3E5F5",
-      "#E0F7FA",
-      "#FCE4EC",
-      "#F1F8E9",
-      "#EDE7F6",
-      "#FFF8E1",
-      "#ECEFF1",
-    ];
-
-    const keys = new Set();
-    rows.forEach((row) => {
-      row.days.forEach((t) => {
-        const s = (t || "").trim();
-        if (!s) return;
-        keys.add(s.charAt(0)); // 1文字単位で色固定
-      });
-    });
-
-    const map = {};
-    Array.from(keys).forEach((k, i) => {
-      map[k] = colorPalette[i % colorPalette.length];
-    });
-
-    return map;
-  }, [rows]);
-
   const zoomPct = Math.round(zoom * 100);
 
   return (
@@ -295,17 +290,11 @@ export default function ShiftApp() {
           background: var(--bg);
         }
 
-        /* ✅ 引き（縮小）表示 */
-        .zoomStage{
-          transform: scale(${zoom});
-          transform-origin: top left;
-          display: inline-block;
-        }
-
         table {
           border-collapse: collapse;
           width: max-content;
           min-width: 100%;
+          font-size: ${ui.font}px;
         }
 
         th, td {
@@ -317,7 +306,7 @@ export default function ShiftApp() {
 
         thead th {
           position: sticky;
-          top: 61px;
+          top: ${ui.topbarH}px;
           z-index: 20;
           background: var(--bg2);
           font-weight: 600;
@@ -331,27 +320,27 @@ export default function ShiftApp() {
         }
         .nameCell { background: var(--bg); }
 
-        .nameCol { width: 160px; min-width: 160px; max-width: 160px; }
-        .dayCol  { width: 84px; min-width: 84px; }
-        .ctlCol  { width: 90px; min-width: 90px; }
+        .nameCol { width: ${ui.nameCol}px; min-width: ${ui.nameCol}px; max-width: ${ui.nameCol}px; }
+        .dayCol  { width: ${ui.dayCol}px; min-width: ${ui.dayCol}px; }
+        .ctlCol  { width: ${ui.ctlCol}px; min-width: ${ui.ctlCol}px; }
 
         .nameInput {
           width: 100%;
           border: none;
           outline: none;
-          padding: 8px;
-          font-size: 14px;
+          padding: ${ui.pad}px;
+          font-size: ${ui.inputFont}px;
           background: transparent;
         }
 
         .cellArea {
           width: 100%;
-          height: 70px;
+          height: ${ui.cellH}px;
           border: none;
           outline: none;
           resize: none;
-          padding: 8px;
-          font-size: 14px;
+          padding: ${ui.pad}px;
+          font-size: ${ui.inputFont}px;
           background: transparent;
         }
 
@@ -360,7 +349,7 @@ export default function ShiftApp() {
           border: none;
           background: transparent;
           padding: 10px 8px;
-          font-size: 13px;
+          font-size: ${ui.fontSmall}px;
           cursor: pointer;
         }
 
@@ -370,11 +359,7 @@ export default function ShiftApp() {
           .page { padding: 10px; }
           h2 { font-size: 16px; }
           button { padding: 12px 14px; font-size: 15px; }
-          thead th { top: 63px; }
-          .nameCol { width: 150px; min-width: 150px; max-width: 150px; }
-          .dayCol { width: 84px; min-width: 84px; }
-          .cellArea { height: 74px; font-size: 15px; }
-          .nameInput { font-size: 15px; }
+          thead th { top: ${ui.topbarH + 2}px; }
         }
       `}</style>
 
@@ -410,10 +395,17 @@ export default function ShiftApp() {
             <span className="zoomValue">{zoomPct}%</span>
             <button
               type="button"
-              onClick={() => setZoom(0.85)}
+              onClick={() => setZoom(0.3)}
               style={{ padding: "6px 10px" }}
             >
-              既定
+              30%
+            </button>
+            <button
+              type="button"
+              onClick={() => setZoom(1.0)}
+              style={{ padding: "6px 10px" }}
+            >
+              100%
             </button>
           </span>
         </div>
@@ -423,59 +415,53 @@ export default function ShiftApp() {
         <div className="loading">読み込み中...</div>
       ) : (
         <div className="tableWrap">
-          <div className="zoomStage">
-            <table>
-              <thead>
-                <tr>
-                  <th className="nameHeader nameCol">名前</th>
-                  {displayOrder.map((day) => (
-                    <th key={day} className="dayCol">
-                      {day}
-                    </th>
-                  ))}
-                  <th className="ctlCol">操作</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {rows.map((row, rIndex) => (
-                  <tr key={rIndex}>
-                    <td className="nameCell nameCol">
-                      <input
-                        className="nameInput"
-                        value={row.name}
-                        onChange={(e) => handleNameChange(rIndex, e.target.value)}
-                        placeholder="例：Aさん / 車輛A"
-                      />
-                    </td>
-
-                    {displayOrder.map((day) => {
-                      const realIndex = day - 1;
-                      const v = row.days[realIndex] || "";
-                      const keyChar = v.trim() ? v.trim().charAt(0) : "";
-                      const bg = keyChar ? textColorMap[keyChar] : "transparent";
-
-                      return (
-                        <td key={day} className="dayCol" style={{ background: bg }}>
-                          <textarea
-                            className="cellArea"
-                            value={v}
-                            onChange={(e) => handleChange(rIndex, realIndex, e.target.value)}
-                          />
-                        </td>
-                      );
-                    })}
-
-                    <td className="ctlCol">
-                      <button className="ctlBtn" onClick={() => clearRow(rIndex)}>
-                        行クリア
-                      </button>
-                    </td>
-                  </tr>
+          <table>
+            <thead>
+              <tr>
+                <th className="nameHeader nameCol">名前</th>
+                {displayOrder.map((day) => (
+                  <th key={day} className="dayCol">
+                    {day}
+                  </th>
                 ))}
-              </tbody>
-            </table>
-          </div>
+                <th className="ctlCol">操作</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {rows.map((row, rIndex) => (
+                <tr key={rIndex}>
+                  <td className="nameCell nameCol">
+                    <input
+                      className="nameInput"
+                      value={row.name}
+                      onChange={(e) => handleNameChange(rIndex, e.target.value)}
+                      placeholder="例：Aさん / 車輛A"
+                    />
+                  </td>
+
+                  {displayOrder.map((day) => {
+                    const realIndex = day - 1;
+                    return (
+                      <td key={day} className="dayCol">
+                        <textarea
+                          className="cellArea"
+                          value={row.days[realIndex]}
+                          onChange={(e) => handleChange(rIndex, realIndex, e.target.value)}
+                        />
+                      </td>
+                    );
+                  })}
+
+                  <td className="ctlCol">
+                    <button className="ctlBtn" onClick={() => clearRow(rIndex)}>
+                      行クリア
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
