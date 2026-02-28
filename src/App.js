@@ -16,7 +16,7 @@ export default function ShiftApp() {
     return arr;
   }, [days]);
 
-  // ズーム（transformは使わない）
+  // ズーム（0.3〜1.2）
   const zoomKey = `zoom:${monthDate}`;
   const [zoom, setZoom] = useState(() => {
     const saved = Number(localStorage.getItem(zoomKey) || "1.0");
@@ -26,6 +26,7 @@ export default function ShiftApp() {
     localStorage.setItem(zoomKey, String(zoom));
   }, [zoom, zoomKey]);
 
+  // UIサイズ計算
   const ui = useMemo(() => {
     const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
     return {
@@ -40,12 +41,18 @@ export default function ShiftApp() {
   }, [zoom]);
 
   const rowCountKey = `rowCount:${monthDate}`;
-  const initialRowCount = Math.max(5, Number(localStorage.getItem(rowCountKey) || "5"));
+  const initialRowCount = Math.max(
+    5,
+    Number(localStorage.getItem(rowCountKey) || "5")
+  );
+
   const makeEmptyRow = () => ({ name: "", days: Array(days).fill("") });
 
   const [rowCount, setRowCount] = useState(initialRowCount);
   const [rows, setRows] = useState(
-    Array(initialRowCount).fill(0).map(() => makeEmptyRow())
+    Array(initialRowCount)
+      .fill(0)
+      .map(() => makeEmptyRow())
   );
 
   const [loading, setLoading] = useState(true);
@@ -59,29 +66,21 @@ export default function ShiftApp() {
       while (next.length < rowCount) next.push(makeEmptyRow());
       return next;
     });
-    // eslint-disable-next-line
   }, [rowCount]);
 
   useEffect(() => {
     loadData();
-    // eslint-disable-next-line
   }, []);
 
   const loadData = async () => {
     setLoading(true);
 
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("schedule")
       .select("row_slot, row_name, day, text")
       .eq("month", monthDate)
       .order("row_slot", { ascending: true })
       .order("day", { ascending: true });
-
-    if (error) {
-      alert("読み込みエラー: " + error.message);
-      setLoading(false);
-      return;
-    }
 
     const maxSlotFromDb =
       (data || []).reduce((m, x) => Math.max(m, x.row_slot || 0), 0) || 0;
@@ -140,7 +139,6 @@ export default function ShiftApp() {
 
   const updateAll = async () => {
     setSaving(true);
-
     await supabase.from("schedule").delete().eq("month", monthDate);
 
     const inserts = [];
@@ -177,7 +175,7 @@ export default function ShiftApp() {
     await loadData();
   };
 
-  // ✅ 全文一致で色固定
+  // 全文一致で色固定
   const textColorMap = useMemo(() => {
     const palette = [
       "#E3F2FD",
@@ -196,7 +194,7 @@ export default function ShiftApp() {
     rows.forEach((row) => {
       row.days.forEach((t) => {
         const s = (t || "").trim();
-        if (s) uniqueTexts.add(s); // ★全文で判定
+        if (s) uniqueTexts.add(s);
       });
     });
 
@@ -238,7 +236,7 @@ export default function ShiftApp() {
           style={{
             overflow: "auto",
             maxHeight: "70vh",
-            border: "1px solid #ccc",
+            border: "2px solid #000",
           }}
         >
           <table
@@ -260,6 +258,7 @@ export default function ShiftApp() {
                     zIndex: 60,
                     background: "#f1f3f5",
                     width: ui.nameCol,
+                    border: "1px solid #000",
                   }}
                 >
                   名前
@@ -274,6 +273,8 @@ export default function ShiftApp() {
                       zIndex: 20,
                       background: "#f1f3f5",
                       width: ui.dayCol,
+                      border: "1px solid #000",
+                      textAlign: "center",
                     }}
                   >
                     {day}
@@ -287,6 +288,7 @@ export default function ShiftApp() {
                     zIndex: 20,
                     background: "#f1f3f5",
                     width: ui.ctlCol,
+                    border: "1px solid #000",
                   }}
                 >
                   操作
@@ -304,6 +306,7 @@ export default function ShiftApp() {
                       background: "#fff",
                       zIndex: 40,
                       width: ui.nameCol,
+                      border: "1px solid #000",
                     }}
                   >
                     <input
@@ -331,6 +334,7 @@ export default function ShiftApp() {
                         key={day}
                         style={{
                           width: ui.dayCol,
+                          border: "1px solid #000",
                           background: bg,
                         }}
                       >
@@ -354,7 +358,7 @@ export default function ShiftApp() {
                     );
                   })}
 
-                  <td style={{ width: ui.ctlCol }}>
+                  <td style={{ border: "1px solid #000", width: ui.ctlCol }}>
                     <button onClick={() => clearRow(rIndex)}>
                       行クリア
                     </button>
