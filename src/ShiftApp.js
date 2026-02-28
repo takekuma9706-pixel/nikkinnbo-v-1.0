@@ -1,10 +1,25 @@
 import { supabase } from "./supabase";
 import { useEffect, useMemo, useState } from "react";
 
+// ✅ ESLint対策：コンポーネント外へ出して「不変の定数」にする
+const colorPalette = [
+  "#E3F2FD",
+  "#E8F5E9",
+  "#FFF3E0",
+  "#F3E5F5",
+  "#E0F7FA",
+  "#FCE4EC",
+  "#F1F8E9",
+  "#EDE7F6",
+  "#FFF8E1",
+  "#ECEFF1",
+];
+
 export default function ShiftApp() {
   const year = 2026;
   const month = 1;
   const monthDate = `${year}-${String(month).padStart(2, "0")}-01`;
+
   const days = useMemo(() => new Date(year, month, 0).getDate(), [year, month]);
 
   // ✅ 表示順：16日スタート（16..月末, 1..15）
@@ -29,10 +44,7 @@ export default function ShiftApp() {
 
   // 行数をブラウザに保存（行を空白にしても詰めない）
   const rowCountKey = `rowCount:${monthDate}`;
-  const initialRowCount = Math.max(
-    5,
-    Number(localStorage.getItem(rowCountKey) || "5")
-  );
+  const initialRowCount = Math.max(5, Number(localStorage.getItem(rowCountKey) || "5"));
 
   const makeEmptyRow = () => ({ name: "", days: Array(days).fill("") });
 
@@ -79,9 +91,7 @@ export default function ShiftApp() {
       return;
     }
 
-    const maxSlotFromDb =
-      (data || []).reduce((m, x) => Math.max(m, x.row_slot || 0), 0) || 0;
-
+    const maxSlotFromDb = (data || []).reduce((m, x) => Math.max(m, x.row_slot || 0), 0) || 0;
     const finalRowCount = Math.max(5, rowCount, maxSlotFromDb);
 
     const newRows = Array(finalRowCount)
@@ -138,10 +148,7 @@ export default function ShiftApp() {
   const updateAll = async () => {
     setSaving(true);
 
-    const { error: delError } = await supabase
-      .from("schedule")
-      .delete()
-      .eq("month", monthDate);
+    const { error: delError } = await supabase.from("schedule").delete().eq("month", monthDate);
 
     if (delError) {
       alert("削除でエラー: " + delError.message);
@@ -189,6 +196,25 @@ export default function ShiftApp() {
     setSaving(false);
     await loadData();
   };
+
+  // ✅ 色分け（必要なら td/textarea の背景に使える）
+  // ※依存配列に colorPalette を入れなくて良い（外の定数だから）
+  const textColorMap = useMemo(() => {
+    const keys = new Set();
+    rows.forEach((row) => {
+      row.days.forEach((t) => {
+        const s = (t || "").trim();
+        if (!s) return;
+        keys.add(s.charAt(0)); // 1文字単位
+      });
+    });
+
+    const map = {};
+    Array.from(keys).forEach((k, i) => {
+      map[k] = colorPalette[i % colorPalette.length];
+    });
+    return map;
+  }, [rows]);
 
   const zoomPct = Math.round(zoom * 100);
 
@@ -269,7 +295,7 @@ export default function ShiftApp() {
           background: var(--bg);
         }
 
-        /* ✅ ここが「引き（縮小）」の本体：テーブル全体を縮小表示 */
+        /* ✅ 引き（縮小）：transformはstickyと相性が悪い端末がある点は注意 */
         .zoomStage{
           transform: scale(${zoom});
           transform-origin: top left;
@@ -425,14 +451,16 @@ export default function ShiftApp() {
 
                     {displayOrder.map((day) => {
                       const realIndex = day - 1;
+                      const v = row.days[realIndex] || "";
+                      const keyChar = v.trim() ? v.trim().charAt(0) : "";
+                      const bg = keyChar ? textColorMap[keyChar] : "transparent";
+
                       return (
-                        <td key={day} className="dayCol">
+                        <td key={day} className="dayCol" style={{ background: bg }}>
                           <textarea
                             className="cellArea"
-                            value={row.days[realIndex]}
-                            onChange={(e) =>
-                              handleChange(rIndex, realIndex, e.target.value)
-                            }
+                            value={v}
+                            onChange={(e) => handleChange(rIndex, realIndex, e.target.value)}
                           />
                         </td>
                       );
