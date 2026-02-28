@@ -43,7 +43,7 @@ export default function ShiftApp() {
 
   useEffect(() => {
     loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line
   }, []);
 
   const loadData = async () => {
@@ -57,7 +57,7 @@ export default function ShiftApp() {
 
     if (error) {
       console.error(error);
-      alert("読み込みに失敗しました");
+      alert("読み込み失敗");
       setLoading(false);
       return;
     }
@@ -70,15 +70,15 @@ export default function ShiftApp() {
       const r = (item.row_slot || 1) - 1;
       if (!newRows[r]) continue;
       newRows[r].name = item.row_name || "";
-      if (item.day > 0) newRows[r].days[item.day - 1] = item.text || "";
+      if (item.day > 0)
+        newRows[r].days[item.day - 1] = item.text || "";
     }
 
     setRows(newRows);
-    setExpandedCells({}); // 表示状態は読み込みのたびにリセット
     setLoading(false);
   };
 
-  // ===== 自動色割り当て =====
+  // ===== 色分け =====
   const colorPalette = [
     "#E3F2FD",
     "#E8F5E9",
@@ -92,7 +92,6 @@ export default function ShiftApp() {
     "#ECEFF1",
   ];
 
-  // 色は「短縮表示に使う1文字」単位で固定（同じ文字なら同じ色）
   const textColorMap = useMemo(() => {
     const uniqueKeys = new Set();
 
@@ -100,8 +99,7 @@ export default function ShiftApp() {
       row.days.forEach((text) => {
         const t = (text || "").trim();
         if (!t) return;
-        const key = t.charAt(0); // 1文字目
-        uniqueKeys.add(key);
+        uniqueKeys.add(t.charAt(0));
       });
     });
 
@@ -116,7 +114,6 @@ export default function ShiftApp() {
   const handleChange = (r, d, val) => {
     setRows((prev) => {
       const next = [...prev];
-      // 行オブジェクトもコピー（破壊的変更を避ける）
       next[r] = { ...next[r], days: [...next[r].days] };
       next[r].days[d] = val;
       return next;
@@ -140,27 +137,20 @@ export default function ShiftApp() {
 
   const editCell = (rIndex, realIndex, currentValue) => {
     const next = window.prompt("入力", currentValue ?? "");
-    if (next === null) return; // キャンセル
+    if (next === null) return;
     handleChange(rIndex, realIndex, next);
   };
 
   const updateAll = async () => {
     setSaving(true);
 
-    const del = await supabase.from("schedule").delete().eq("month", monthDate);
-    if (del.error) {
-      console.error(del.error);
-      alert("更新に失敗しました（削除）");
-      setSaving(false);
-      return;
-    }
+    await supabase.from("schedule").delete().eq("month", monthDate);
 
     const inserts = [];
 
     rows.forEach((row, rIndex) => {
       if (!row.name.trim()) return;
 
-      // 行の存在を担保するレコード（day=0）
       inserts.push({
         month: monthDate,
         row_slot: rIndex + 1,
@@ -170,33 +160,25 @@ export default function ShiftApp() {
       });
 
       row.days.forEach((text, dIndex) => {
-        const t = (text || "").trim();
-        if (!t) return;
+        if (!text.trim()) return;
         inserts.push({
           month: monthDate,
           row_slot: rIndex + 1,
           row_name: row.name,
           day: dIndex + 1,
-          text: t,
+          text,
         });
       });
     });
 
     if (inserts.length) {
-      const ins = await supabase.from("schedule").insert(inserts);
-      if (ins.error) {
-        console.error(ins.error);
-        alert("更新に失敗しました（保存）");
-        setSaving(false);
-        return;
-      }
+      await supabase.from("schedule").insert(inserts);
     }
 
     alert("更新しました");
     setSaving(false);
   };
 
-  // ★ フィルタしても index がズレないように「元indexを保持」する
   const rowsWithIndex = useMemo(
     () => rows.map((row, index) => ({ row, index })),
     [rows]
@@ -204,7 +186,9 @@ export default function ShiftApp() {
 
   const filteredRows = useMemo(() => {
     if (!query) return rowsWithIndex;
-    return rowsWithIndex.filter(({ row }) => row.name.includes(query));
+    return rowsWithIndex.filter(({ row }) =>
+      row.name.includes(query)
+    );
   }, [rowsWithIndex, query]);
 
   const zoomPct = Math.round(zoom * 100);
@@ -227,7 +211,9 @@ export default function ShiftApp() {
           onChange={(e) => setQuery(e.target.value)}
         />
 
-        <span style={{ marginLeft: 15 }}>表示倍率 {zoomPct}%</span>
+        <span style={{ marginLeft: 15 }}>
+          表示倍率 {zoomPct}%
+        </span>
 
         <input
           type="range"
@@ -242,14 +228,45 @@ export default function ShiftApp() {
       {loading ? (
         <div>読み込み中...</div>
       ) : (
-        <div style={{ overflowX: "auto" }}>
-          <div style={{ transform: `scale(${zoom})`, transformOrigin: "top left" }}>
-            <table border="1" style={{ borderCollapse: "collapse" }}>
+        <div style={{ overflow: "auto", maxHeight: "80vh" }}>
+          <div
+            style={{
+              transform: `scale(${zoom})`,
+              transformOrigin: "top left",
+            }}
+          >
+            <table
+              border="1"
+              style={{ borderCollapse: "collapse" }}
+            >
               <thead>
                 <tr>
-                  <th>名前</th>
+                  <th
+                    style={{
+                      position: "sticky",
+                      top: 0,
+                      left: 0,
+                      background: "#f1f3f5",
+                      zIndex: 3,
+                      fontWeight: "bold",
+                    }}
+                  >
+                    名前
+                  </th>
+
                   {displayOrder.map((d) => (
-                    <th key={d}>{d}</th>
+                    <th
+                      key={d}
+                      style={{
+                        position: "sticky",
+                        top: 0,
+                        background: "#f1f3f5",
+                        zIndex: 2,
+                        fontWeight: "bold",
+                      }}
+                    >
+                      {d}
+                    </th>
                   ))}
                 </tr>
               </thead>
@@ -257,23 +274,43 @@ export default function ShiftApp() {
               <tbody>
                 {filteredRows.map(({ row, index: rIndex }) => (
                   <tr key={rIndex}>
-                    <td>
+                    <td
+                      style={{
+                        position: "sticky",
+                        left: 0,
+                        background: "#fff",
+                        zIndex: 1,
+                      }}
+                    >
                       <input
                         value={row.name}
-                        onChange={(e) => handleNameChange(rIndex, e.target.value)}
+                        onChange={(e) =>
+                          handleNameChange(
+                            rIndex,
+                            e.target.value
+                          )
+                        }
                       />
                     </td>
 
                     {displayOrder.map((day) => {
                       const realIndex = day - 1;
-                      const value = row.days[realIndex] || "";
+                      const value =
+                        row.days[realIndex] || "";
 
-                      const keyChar = value.trim() ? value.trim().charAt(0) : "";
-                      const bg = keyChar ? textColorMap[keyChar] : "#fff";
+                      const keyChar = value.trim()
+                        ? value.trim().charAt(0)
+                        : "";
+
+                      const bg = keyChar
+                        ? textColorMap[keyChar]
+                        : "#fff";
+
                       const shortText = keyChar;
 
                       const cellKey = `${rIndex}-${realIndex}`;
-                      const expanded = !!expandedCells[cellKey];
+                      const expanded =
+                        !!expandedCells[cellKey];
 
                       return (
                         <td
@@ -284,13 +321,21 @@ export default function ShiftApp() {
                             cursor: "pointer",
                             fontWeight: "bold",
                             minWidth: 50,
-                            userSelect: "none",
                           }}
-                          onClick={() => toggleExpand(cellKey)}
-                          onDoubleClick={() => editCell(rIndex, realIndex, value)}
-                          title="クリック: 展開 / ダブルクリック: 編集"
+                          onClick={() =>
+                            toggleExpand(cellKey)
+                          }
+                          onDoubleClick={() =>
+                            editCell(
+                              rIndex,
+                              realIndex,
+                              value
+                            )
+                          }
                         >
-                          {expanded ? value : shortText}
+                          {expanded
+                            ? value
+                            : shortText}
                         </td>
                       );
                     })}
