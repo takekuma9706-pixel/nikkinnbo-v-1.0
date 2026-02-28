@@ -15,7 +15,7 @@ export default function ShiftApp() {
     return arr;
   }, [days]);
 
-  // ===== ズーム（transformは使わずサイズで表現：Androidでも安定）=====
+  // ===== ズーム（transformは使わずサイズで表現）=====
   const zoomKey = `zoom:${monthDate}`;
   const [zoom, setZoom] = useState(() => {
     const saved = Number(localStorage.getItem(zoomKey) || "0.85");
@@ -29,6 +29,7 @@ export default function ShiftApp() {
     const baseCell = 52;
     const baseFont = 14;
     const baseName = 140;
+
     return {
       cellW: Math.round(baseCell * zoom),
       fontSize: Math.round(baseFont * zoom),
@@ -205,18 +206,15 @@ export default function ShiftApp() {
     return rowsWithIndex.filter(({ row }) => row.name.includes(query));
   }, [rowsWithIndex, query]);
 
-  // ===== スクロール同期（日付行＝常に表示 / 本体と横同期 / 名前列と縦同期）=====
-  const headerRef = useRef(null); // 日付行（横スクロールのみ）
-  const leftRef = useRef(null);   // 名前列（縦スクロールのみ）
-  const bodyRef = useRef(null);   // 本体（縦横スクロール）
-
+  // ===== スクロール同期（上：日付行 / 左：名前列 / 本体：縦横）=====
+  const headerRef = useRef(null);
+  const leftRef = useRef(null);
+  const bodyRef = useRef(null);
   const syncing = useRef(false);
 
-  // 重要：最後までズレないように「反映後のscroll値を読み戻して相互に合わせる」
   const onBodyScroll = () => {
     if (syncing.current) return;
     syncing.current = true;
-
     requestAnimationFrame(() => {
       const body = bodyRef.current;
       const header = headerRef.current;
@@ -227,13 +225,11 @@ export default function ShiftApp() {
         const fixed = header.scrollLeft;
         if (body.scrollLeft !== fixed) body.scrollLeft = fixed;
       }
-
       if (body && left) {
         left.scrollTop = body.scrollTop;
         const fixedTop = left.scrollTop;
         if (body.scrollTop !== fixedTop) body.scrollTop = fixedTop;
       }
-
       syncing.current = false;
     });
   };
@@ -241,7 +237,6 @@ export default function ShiftApp() {
   const onHeaderScroll = () => {
     if (syncing.current) return;
     syncing.current = true;
-
     requestAnimationFrame(() => {
       const body = bodyRef.current;
       const header = headerRef.current;
@@ -257,7 +252,6 @@ export default function ShiftApp() {
   const onLeftScroll = () => {
     if (syncing.current) return;
     syncing.current = true;
-
     requestAnimationFrame(() => {
       const body = bodyRef.current;
       const left = leftRef.current;
@@ -272,7 +266,6 @@ export default function ShiftApp() {
 
   const zoomPct = Math.round(zoom * 100);
 
-  // セル共通style（divグリッドで描画）
   const cellBase = {
     width: ui.cellW,
     minWidth: ui.cellW,
@@ -301,7 +294,6 @@ export default function ShiftApp() {
     background: "#fff",
   };
 
-  // 本体幅（横スクロール上限をヘッダー/本体で一致させる）
   const bodyWidth = ui.cellW * displayOrder.length;
 
   return (
@@ -337,64 +329,80 @@ export default function ShiftApp() {
         <div>読み込み中...</div>
       ) : (
         <div style={{ border: "1px solid #ddd", borderRadius: 6, overflow: "hidden" }}>
-          {/* 2x2レイアウト：
-              [左上] [日付行]  ← 日付行は常に表示（ここが「16..15の行を追従」）
-              [名前列] [本体]
-          */}
+          {/* ✅ 日付行（16..15）を「画面に対して常時表示」 */}
+          <div
+            style={{
+              position: "sticky",
+              top: 0,
+              zIndex: 999,
+              background: ui.headerBg,
+            }}
+          >
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: `${ui.nameW}px 1fr`,
+                gridTemplateRows: `${ui.rowH}px`,
+                width: "100%",
+              }}
+            >
+              {/* 左上 */}
+              <div
+                style={{
+                  background: ui.headerBg,
+                  borderRight: "1px solid #ddd",
+                  borderBottom: "1px solid #ddd",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontWeight: "bold",
+                  fontSize: ui.fontSize,
+                }}
+              >
+                名前
+              </div>
+
+              {/* 日付行（横スクロールのみ） */}
+              <div
+                ref={headerRef}
+                onScroll={onHeaderScroll}
+                style={{
+                  overflowX: "auto",
+                  overflowY: "hidden",
+                  WebkitOverflowScrolling: "touch",
+                  background: ui.headerBg,
+                  borderBottom: "1px solid #ddd",
+                  overscrollBehavior: "contain",
+                }}
+              >
+                <div style={{ display: "flex", width: bodyWidth }}>
+                  {displayOrder.map((d) => (
+                    <div
+                      key={d}
+                      style={{
+                        ...cellBase,
+                        background: ui.headerBg,
+                        fontSize: ui.fontSize,
+                      }}
+                    >
+                      {d}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* 下段：名前列＋本体（ここをスクロールしても日付行は残る） */}
           <div
             style={{
               display: "grid",
               gridTemplateColumns: `${ui.nameW}px 1fr`,
-              gridTemplateRows: `${ui.rowH}px 70vh`,
+              gridTemplateRows: `70vh`,
               width: "100%",
             }}
           >
-            {/* 左上 */}
-            <div
-              style={{
-                background: ui.headerBg,
-                borderRight: "1px solid #ddd",
-                borderBottom: "1px solid #ddd",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontWeight: "bold",
-                fontSize: ui.fontSize,
-              }}
-            >
-              名前
-            </div>
-
-            {/* 日付行（常に表示・横スクロールのみ） */}
-            <div
-              ref={headerRef}
-              onScroll={onHeaderScroll}
-              style={{
-                overflowX: "auto",
-                overflowY: "hidden",
-                WebkitOverflowScrolling: "touch",
-                background: ui.headerBg,
-                borderBottom: "1px solid #ddd",
-                overscrollBehavior: "contain",
-              }}
-            >
-              <div style={{ display: "flex", width: bodyWidth }}>
-                {displayOrder.map((d) => (
-                  <div
-                    key={d}
-                    style={{
-                      ...cellBase,
-                      background: ui.headerBg,
-                      fontSize: ui.fontSize,
-                    }}
-                  >
-                    {d}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* 名前列（縦スクロールのみ） */}
+            {/* 名前列（縦スクロール） */}
             <div
               ref={leftRef}
               onScroll={onLeftScroll}
