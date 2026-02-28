@@ -15,16 +15,32 @@ export default function ShiftApp() {
     return arr;
   }, [days]);
 
-  // ===== ズーム =====
+  // ===== ズーム（※transform scaleはstickyと相性が悪いので使わない）=====
   const zoomKey = `zoom:${monthDate}`;
   const [zoom, setZoom] = useState(() => {
-    const saved = Number(localStorage.getItem(zoomKey) || "0.65");
-    return Math.min(1.2, Math.max(0.35, saved));
+    const saved = Number(localStorage.getItem(zoomKey) || "0.85");
+    return Math.min(1.2, Math.max(0.6, saved));
   });
 
   useEffect(() => {
     localStorage.setItem(zoomKey, String(zoom));
   }, [zoom, zoomKey]);
+
+  // ズームは「セル幅/文字サイズ」で表現（スマホstickyが安定）
+  const ui = useMemo(() => {
+    const baseCell = 50;
+    const baseFont = 14;
+    const baseName = 120;
+
+    return {
+      cellMinWidth: Math.round(baseCell * zoom),
+      fontSize: Math.round(baseFont * zoom),
+      nameColWidth: Math.round(baseName * zoom),
+      inputFontSize: Math.round(13 * zoom),
+      paddingY: Math.max(2, Math.round(4 * zoom)),
+      paddingX: Math.max(3, Math.round(6 * zoom)),
+    };
+  }, [zoom]);
 
   // ===== 行数 =====
   const initialRowCount = 20;
@@ -70,11 +86,11 @@ export default function ShiftApp() {
       const r = (item.row_slot || 1) - 1;
       if (!newRows[r]) continue;
       newRows[r].name = item.row_name || "";
-      if (item.day > 0)
-        newRows[r].days[item.day - 1] = item.text || "";
+      if (item.day > 0) newRows[r].days[item.day - 1] = item.text || "";
     }
 
     setRows(newRows);
+    setExpandedCells({});
     setLoading(false);
   };
 
@@ -92,9 +108,9 @@ export default function ShiftApp() {
     "#ECEFF1",
   ];
 
+  // 「短縮表示の1文字」単位で色固定
   const textColorMap = useMemo(() => {
     const uniqueKeys = new Set();
-
     rows.forEach((row) => {
       row.days.forEach((text) => {
         const t = (text || "").trim();
@@ -107,7 +123,6 @@ export default function ShiftApp() {
     Array.from(uniqueKeys).forEach((key, index) => {
       map[key] = colorPalette[index % colorPalette.length];
     });
-
     return map;
   }, [rows]);
 
@@ -144,10 +159,15 @@ export default function ShiftApp() {
   const updateAll = async () => {
     setSaving(true);
 
-    await supabase.from("schedule").delete().eq("month", monthDate);
+    const del = await supabase.from("schedule").delete().eq("month", monthDate);
+    if (del.error) {
+      console.error(del.error);
+      alert("更新に失敗しました（削除）");
+      setSaving(false);
+      return;
+    }
 
     const inserts = [];
-
     rows.forEach((row, rIndex) => {
       if (!row.name.trim()) return;
 
@@ -160,25 +180,33 @@ export default function ShiftApp() {
       });
 
       row.days.forEach((text, dIndex) => {
-        if (!text.trim()) return;
+        const t = (text || "").trim();
+        if (!t) return;
         inserts.push({
           month: monthDate,
           row_slot: rIndex + 1,
           row_name: row.name,
           day: dIndex + 1,
-          text,
+          text: t,
         });
       });
     });
 
     if (inserts.length) {
-      await supabase.from("schedule").insert(inserts);
+      const ins = await supabase.from("schedule").insert(inserts);
+      if (ins.error) {
+        console.error(ins.error);
+        alert("更新に失敗しました（保存）");
+        setSaving(false);
+        return;
+      }
     }
 
     alert("更新しました");
     setSaving(false);
   };
 
+  // ★ 検索してもindexズレない
   const rowsWithIndex = useMemo(
     () => rows.map((row, index) => ({ row, index })),
     [rows]
@@ -186,12 +214,13 @@ export default function ShiftApp() {
 
   const filteredRows = useMemo(() => {
     if (!query) return rowsWithIndex;
-    return rowsWithIndex.filter(({ row }) =>
-      row.name.includes(query)
-    );
+    return rowsWithIndex.filter(({ row }) => row.name.includes(query));
   }, [rowsWithIndex, query]);
 
   const zoomPct = Math.round(zoom * 100);
+
+  // 固定ヘッダー色（少し濃い）
+  const headerBg = "#f1f3f5";
 
   return (
     <div style={{ padding: 12 }}>
@@ -211,13 +240,10 @@ export default function ShiftApp() {
           onChange={(e) => setQuery(e.target.value)}
         />
 
-        <span style={{ marginLeft: 15 }}>
-          表示倍率 {zoomPct}%
-        </span>
-
+        <span style={{ marginLeft: 15 }}>表示倍率 {zoomPct}%</span>
         <input
           type="range"
-          min="0.35"
+          min="0.6"
           max="1.2"
           step="0.05"
           value={zoom}
@@ -228,122 +254,121 @@ export default function ShiftApp() {
       {loading ? (
         <div>読み込み中...</div>
       ) : (
-        <div style={{ overflow: "auto", maxHeight: "80vh" }}>
-          <div
+        <div
+          style={{
+            overflow: "auto",
+            maxHeight: "80vh",
+            WebkitOverflowScrolling: "touch", // iOSでスクロールを滑らかに
+            border: "1px solid #ddd",
+          }}
+        >
+          <table
+            border="1"
             style={{
-              transform: `scale(${zoom})`,
-              transformOrigin: "top left",
+              borderCollapse: "separate", // sticky安定のため（collapseだとiOSで崩れることあり）
+              borderSpacing: 0,
+              fontSize: ui.fontSize,
             }}
           >
-            <table
-              border="1"
-              style={{ borderCollapse: "collapse" }}
-            >
-              <thead>
-                <tr>
+            <thead>
+              <tr>
+                {/* 左上（名前ヘッダー） */}
+                <th
+                  style={{
+                    position: "sticky",
+                    top: 0,
+                    left: 0,
+                    background: headerBg,
+                    zIndex: 5,
+                    fontWeight: "bold",
+                    minWidth: ui.nameColWidth,
+                    padding: `${ui.paddingY}px ${ui.paddingX}px`,
+                  }}
+                >
+                  名前
+                </th>
+
+                {/* 日付ヘッダー */}
+                {displayOrder.map((d) => (
                   <th
+                    key={d}
                     style={{
                       position: "sticky",
                       top: 0,
-                      left: 0,
-                      background: "#f1f3f5",
-                      zIndex: 3,
+                      background: headerBg,
+                      zIndex: 4,
                       fontWeight: "bold",
+                      minWidth: ui.cellMinWidth,
+                      textAlign: "center",
+                      padding: `${ui.paddingY}px ${ui.paddingX}px`,
                     }}
                   >
-                    名前
+                    {d}
                   </th>
-
-                  {displayOrder.map((d) => (
-                    <th
-                      key={d}
-                      style={{
-                        position: "sticky",
-                        top: 0,
-                        background: "#f1f3f5",
-                        zIndex: 2,
-                        fontWeight: "bold",
-                      }}
-                    >
-                      {d}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-
-              <tbody>
-                {filteredRows.map(({ row, index: rIndex }) => (
-                  <tr key={rIndex}>
-                    <td
-                      style={{
-                        position: "sticky",
-                        left: 0,
-                        background: "#fff",
-                        zIndex: 1,
-                      }}
-                    >
-                      <input
-                        value={row.name}
-                        onChange={(e) =>
-                          handleNameChange(
-                            rIndex,
-                            e.target.value
-                          )
-                        }
-                      />
-                    </td>
-
-                    {displayOrder.map((day) => {
-                      const realIndex = day - 1;
-                      const value =
-                        row.days[realIndex] || "";
-
-                      const keyChar = value.trim()
-                        ? value.trim().charAt(0)
-                        : "";
-
-                      const bg = keyChar
-                        ? textColorMap[keyChar]
-                        : "#fff";
-
-                      const shortText = keyChar;
-
-                      const cellKey = `${rIndex}-${realIndex}`;
-                      const expanded =
-                        !!expandedCells[cellKey];
-
-                      return (
-                        <td
-                          key={day}
-                          style={{
-                            background: bg,
-                            textAlign: "center",
-                            cursor: "pointer",
-                            fontWeight: "bold",
-                            minWidth: 50,
-                          }}
-                          onClick={() =>
-                            toggleExpand(cellKey)
-                          }
-                          onDoubleClick={() =>
-                            editCell(
-                              rIndex,
-                              realIndex,
-                              value
-                            )
-                          }
-                        >
-                          {expanded
-                            ? value
-                            : shortText}
-                        </td>
-                      );
-                    })}
-                  </tr>
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </tr>
+            </thead>
+
+            <tbody>
+              {filteredRows.map(({ row, index: rIndex }) => (
+                <tr key={rIndex}>
+                  {/* 名前列（左固定） */}
+                  <td
+                    style={{
+                      position: "sticky",
+                      left: 0,
+                      background: "#fff",
+                      zIndex: 3,
+                      minWidth: ui.nameColWidth,
+                      padding: `${ui.paddingY}px ${ui.paddingX}px`,
+                    }}
+                  >
+                    <input
+                      value={row.name}
+                      onChange={(e) => handleNameChange(rIndex, e.target.value)}
+                      style={{
+                        width: "100%",
+                        fontSize: ui.inputFontSize,
+                        boxSizing: "border-box",
+                      }}
+                    />
+                  </td>
+
+                  {displayOrder.map((day) => {
+                    const realIndex = day - 1;
+                    const value = row.days[realIndex] || "";
+
+                    const keyChar = value.trim() ? value.trim().charAt(0) : "";
+                    const bg = keyChar ? textColorMap[keyChar] : "#fff";
+                    const shortText = keyChar;
+
+                    const cellKey = `${rIndex}-${realIndex}`;
+                    const expanded = !!expandedCells[cellKey];
+
+                    return (
+                      <td
+                        key={day}
+                        style={{
+                          background: bg,
+                          textAlign: "center",
+                          cursor: "pointer",
+                          fontWeight: "bold",
+                          minWidth: ui.cellMinWidth,
+                          padding: `${ui.paddingY}px ${ui.paddingX}px`,
+                          userSelect: "none",
+                        }}
+                        onClick={() => toggleExpand(cellKey)}
+                        onDoubleClick={() => editCell(rIndex, realIndex, value)}
+                        title="クリック: 展開 / ダブルクリック: 編集"
+                      >
+                        {expanded ? value : shortText}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
