@@ -40,10 +40,19 @@ export default function ShiftApp() {
     };
   }, [zoom]);
 
+  // 行数
   const rowCountKey = useMemo(() => `rowCount:${monthDate}`, [monthDate]);
 
+  // ✅ 現在選択中の文字色（パレット）
+  const [currentTextColor, setCurrentTextColor] = useState("#000000");
+  // ✅ どのセルを操作中か（パレットクリックでそのセルに適用する）
+  const [activeCell, setActiveCell] = useState(null); // { r:number, d:number } | null
+
   const makeEmptyRow = useCallback(
-    () => ({ name: "", days: Array(days).fill("") }),
+    () => ({
+      name: "",
+      days: Array(days).fill(0).map(() => ({ text: "", color: "" })), // ← セルごとに text/color
+    }),
     [days]
   );
 
@@ -71,12 +80,13 @@ export default function ShiftApp() {
     });
   }, [rowCount, rowCountKey, makeEmptyRow]);
 
+  // Supabase load（text_colorも読む）
   const loadData = useCallback(async () => {
     setLoading(true);
 
     const { data, error } = await supabase
       .from("schedule")
-      .select("row_slot, row_name, day, text")
+      .select("row_slot, row_name, day, text, text_color")
       .eq("month", monthDate)
       .order("row_slot", { ascending: true })
       .order("day", { ascending: true });
@@ -105,7 +115,18 @@ export default function ShiftApp() {
 
       const dayNum = item.day ?? 0;
       if (dayNum >= 1 && dayNum <= days) {
-        newRows[rIndex].days[dayNum - 1] = item.text ?? "";
+        const dIndex = dayNum - 1;
+        newRows[rIndex].days[dIndex] = {
+          text: item.text ?? "",
+          color: item.text_color ?? "", // ← DBから復元
+        };
+      }
+    }
+
+    // undefined対策（空セルもオブジェクトに）
+    for (let r = 0; r < newRows.length; r++) {
+      for (let d = 0; d < days; d++) {
+        if (!newRows[r].days[d]) newRows[r].days[d] = { text: "", color: "" };
       }
     }
 
@@ -118,6 +139,7 @@ export default function ShiftApp() {
     loadData();
   }, [loadData]);
 
+  // 入力ハンドラ
   const handleNameChange = (i, v) => {
     setRows((prev) => {
       const next = [...prev];
@@ -126,13 +148,24 @@ export default function ShiftApp() {
     });
   };
 
-  const handleChange = (r, d, v) => {
+  // ✅ セル文字を変える（色が未設定なら currentTextColor を自動適用）
+  const handleCellTextChange = (r, d, v) => {
     setRows((prev) => {
       const next = [...prev];
-      next[r] = { ...next[r] };
-      const dayArr = [...next[r].days];
-      dayArr[d] = v;
-      next[r].days = dayArr;
+      const row = { ...next[r] };
+      const dayArr = [...row.days];
+      const cell = { ...(dayArr[d] || { text: "", color: "" }) };
+
+      cell.text = v;
+
+      // 初回入力のタイミングで色を付ける（空→入力）
+      if (!cell.color && v.trim()) {
+        cell.color = currentTextColor;
+      }
+
+      dayArr[d] = cell;
+      row.days = dayArr;
+      next[r] = row;
       return next;
     });
   };
@@ -147,6 +180,27 @@ export default function ShiftApp() {
     });
   };
 
+  // ✅ パレットクリック：現在色を変える＆アクティブセルがあればそのセルに即適用
+  const applyPaletteColor = (color) => {
+    setCurrentTextColor(color);
+
+    if (!activeCell) return;
+    const { r, d } = activeCell;
+
+    setRows((prev) => {
+      const next = [...prev];
+      const row = { ...next[r] };
+      const dayArr = [...row.days];
+      const cell = { ...(dayArr[d] || { text: "", color: "" }) };
+      cell.color = color;
+      dayArr[d] = cell;
+      row.days = dayArr;
+      next[r] = row;
+      return next;
+    });
+  };
+
+  // 更新（Supabaseへ text_color も保存）
   const updateAll = async () => {
     setSaving(true);
 
@@ -162,16 +216,18 @@ export default function ShiftApp() {
       const name = (row.name || "").trim();
       if (!name) return;
 
+      // day=0 は「行の存在」用（色は不要）
       inserts.push({
         month: monthDate,
         row_slot: r + 1,
         row_name: name,
         day: 0,
         text: "",
+        text_color: null,
       });
 
-      row.days.forEach((text, d) => {
-        const t = (text || "").trim();
+      row.days.forEach((cell, d) => {
+        const t = (cell?.text || "").trim();
         if (!t) return;
 
         inserts.push({
@@ -180,6 +236,7 @@ export default function ShiftApp() {
           row_name: name,
           day: d + 1,
           text: t,
+          text_color: cell?.color || null, // ← 保存
         });
       });
     });
@@ -198,7 +255,7 @@ export default function ShiftApp() {
     loadData();
   };
 
-  // ====== 色（背景：全文一致で自動） ======
+  // 背景色：全文一致で自動（文字色とは別）
   const bgColorMap = useMemo(() => {
     const palette = [
       "#E3F2FD",
@@ -215,8 +272,8 @@ export default function ShiftApp() {
 
     const unique = new Set();
     rows.forEach((row) => {
-      row.days.forEach((t) => {
-        const s = (t || "").trim();
+      row.days.forEach((cell) => {
+        const s = (cell?.text || "").trim();
         if (s) unique.add(s);
       });
     });
@@ -228,67 +285,32 @@ export default function ShiftApp() {
     return map;
   }, [rows]);
 
-  // ====== 文字色（全文ごとに手動で選択） ======
-  const textColorKey = useMemo(() => `textColorMap:${monthDate}`, [monthDate]);
-
-  const [textColorMap, setTextColorMap] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem(textColorKey) || "{}");
-    } catch {
-      return {};
-    }
-  });
-
-  useEffect(() => {
-    localStorage.setItem(textColorKey, JSON.stringify(textColorMap));
-  }, [textColorMap, textColorKey]);
-
-  // 現在月の「ユニーク全文一覧」
-  const uniqueTexts = useMemo(() => {
-    const s = new Set();
-    rows.forEach((row) =>
-      row.days.forEach((t) => {
-        const v = (t || "").trim();
-        if (v) s.add(v);
-      })
-    );
-    return Array.from(s).sort((a, b) => a.localeCompare(b, "ja"));
-  }, [rows]);
-
-  // 選択用のカラーパレット（文字色）
+  // Excelっぽい文字色パレット
   const textPalette = useMemo(
     () => [
-      "#111111",
-      "#ffffff",
-      "#d32f2f",
-      "#c2185b",
-      "#7b1fa2",
-      "#3949ab",
-      "#1976d2",
-      "#00838f",
-      "#2e7d32",
-      "#f57c00",
-      "#5d4037",
-      "#455a64",
+      "#000000",
+      "#1F1F1F",
+      "#7F7F7F",
+      "#D9D9D9",
+      "#FFFFFF",
+      "#C00000",
+      "#FF0000",
+      "#FFC000",
+      "#FFFF00",
+      "#92D050",
+      "#00B050",
+      "#00B0F0",
+      "#0070C0",
+      "#002060",
+      "#7030A0",
+      "#9BBB59",
+      "#4F81BD",
+      "#F79646",
+      "#8064A2",
+      "#948A54",
     ],
     []
   );
-
-  const setTextColorForValue = (valueText, color) => {
-    const key = (valueText || "").trim();
-    if (!key) return;
-    setTextColorMap((prev) => ({ ...prev, [key]: color }));
-  };
-
-  const clearTextColorForValue = (valueText) => {
-    const key = (valueText || "").trim();
-    if (!key) return;
-    setTextColorMap((prev) => {
-      const next = { ...prev };
-      delete next[key];
-      return next;
-    });
-  };
 
   const zoomPct = Math.round(zoom * 100);
   const cellBorder = "1px solid #000";
@@ -322,7 +344,7 @@ export default function ShiftApp() {
         />
       </div>
 
-      {/* ====== 文字色パレット設定UI ====== */}
+      {/* 文字色パレット */}
       <div
         style={{
           border: "1px solid #ccc",
@@ -331,114 +353,79 @@ export default function ShiftApp() {
           marginBottom: 10,
         }}
       >
-        <div style={{ fontWeight: 700, marginBottom: 6 }}>
-          文字色設定（全文ごと）
-        </div>
-        <div style={{ fontSize: ui.smallFont, color: "#444", marginBottom: 8 }}>
-          セルに入っている「全文」単位で文字色を固定できます（この月だけ保存）
-        </div>
-
-        {uniqueTexts.length === 0 ? (
-          <div style={{ fontSize: ui.smallFont, color: "#666" }}>
-            まだ入力がありません
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ fontWeight: 700 }}>文字色</div>
+          <div style={{ fontSize: ui.smallFont, color: "#444" }}>
+            先に色を選ぶ → 入力/選択したセルはその色（端末が変わっても共有：更新ボタンで保存）
           </div>
-        ) : (
-          <div style={{ display: "grid", gap: 8 }}>
-            {uniqueTexts.map((t) => {
-              const fg = textColorMap[t] || "#111111";
-              const bg = bgColorMap[t] || "transparent";
 
-              return (
-                <div
-                  key={t}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr auto",
-                    alignItems: "center",
-                    gap: 10,
-                    padding: 8,
-                    border: "1px solid #ddd",
-                    borderRadius: 8,
-                  }}
-                >
-                  {/* プレビュー */}
-                  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                    <div
-                      style={{
-                        padding: "6px 10px",
-                        border: "1px solid #000",
-                        background: bg,
-                        color: fg,
-                        fontWeight: 700,
-                        borderRadius: 6,
-                        maxWidth: 420,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                      title={t}
-                    >
-                      {t}
-                    </div>
-
-                    <div style={{ fontSize: ui.smallFont, color: "#444" }}>
-                      現在：{fg}
-                    </div>
-                  </div>
-
-                  {/* パレット */}
-                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    {textPalette.map((c) => (
-                      <button
-                        key={c}
-                        type="button"
-                        onClick={() => setTextColorForValue(t, c)}
-                        title={c}
-                        style={{
-                          width: 22,
-                          height: 22,
-                          padding: 0,
-                          borderRadius: 6,
-                          border: "1px solid #000",
-                          background: c,
-                          cursor: "pointer",
-                          outline: c === fg ? "3px solid #1976d2" : "none",
-                        }}
-                      />
-                    ))}
-
-                    {/* 任意色（カラーピッカー） */}
-                    <input
-                      type="color"
-                      value={fg}
-                      onChange={(e) => setTextColorForValue(t, e.target.value)}
-                      title="任意の色"
-                      style={{ width: 34, height: 26, border: "none", background: "transparent" }}
-                    />
-
-                    <button
-                      type="button"
-                      onClick={() => clearTextColorForValue(t)}
-                      style={{
-                        padding: "6px 10px",
-                        border: "1px solid #000",
-                        background: "#fff",
-                        borderRadius: 8,
-                        cursor: "pointer",
-                      }}
-                      title="文字色を初期（黒）に戻す"
-                    >
-                      リセット
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+          <div
+            style={{
+              marginLeft: "auto",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+            }}
+          >
+            <span style={{ fontSize: ui.smallFont, color: "#444" }}>
+              選択中
+            </span>
+            <span
+              style={{
+                display: "inline-block",
+                width: 20,
+                height: 20,
+                borderRadius: 6,
+                border: "1px solid #000",
+                background: currentTextColor,
+              }}
+              title={currentTextColor}
+            />
+            <input
+              type="color"
+              value={currentTextColor}
+              onChange={(e) => applyPaletteColor(e.target.value)}
+              title="任意の色"
+              style={{
+                width: 40,
+                height: 26,
+                border: "none",
+                background: "transparent",
+              }}
+            />
           </div>
-        )}
+        </div>
+
+        <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {textPalette.map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => applyPaletteColor(c)}
+              title={c}
+              style={{
+                width: 26,
+                height: 26,
+                padding: 0,
+                borderRadius: 6,
+                border: "1px solid #000",
+                background: c,
+                cursor: "pointer",
+                outline:
+                  currentTextColor === c ? "3px solid #1976d2" : "none",
+              }}
+            />
+          ))}
+        </div>
       </div>
 
-      {/* ====== 表 ====== */}
       {loading ? (
         <div>読み込み中...</div>
       ) : (
@@ -538,15 +525,16 @@ export default function ShiftApp() {
                         outline: "none",
                         background: "transparent",
                       }}
+                      placeholder="例：かぼちゃ"
                     />
                   </td>
 
                   {displayOrder.map((day) => {
-                    const realIndex = day - 1;
-                    const value = row.days[realIndex] || "";
-                    const key = value.trim();
-                    const bg = bgColorMap[key] || "transparent";
-                    const fg = textColorMap[key] || "#111111";
+                    const dIndex = day - 1;
+                    const cell = row.days[dIndex] || { text: "", color: "" };
+                    const value = cell.text || "";
+                    const bg = bgColorMap[value.trim()] || "transparent";
+                    const fg = cell.color || "#000000";
 
                     return (
                       <td
@@ -560,7 +548,10 @@ export default function ShiftApp() {
                       >
                         <textarea
                           value={value}
-                          onChange={(e) => handleChange(rIndex, realIndex, e.target.value)}
+                          onChange={(e) =>
+                            handleCellTextChange(rIndex, dIndex, e.target.value)
+                          }
+                          onFocus={() => setActiveCell({ r: rIndex, d: dIndex })}
                           style={{
                             width: "100%",
                             height: ui.cellH,
@@ -570,8 +561,12 @@ export default function ShiftApp() {
                             outline: "none",
                             resize: "none",
                             background: "transparent",
-                            color: fg,           // ★ここが「文字色」
+                            color: fg,
                             fontWeight: 700,
+                            textShadow:
+                              fg.toUpperCase() === "#FFFFFF"
+                                ? "0 0 2px rgba(0,0,0,0.6)"
+                                : "none",
                           }}
                         />
                       </td>
