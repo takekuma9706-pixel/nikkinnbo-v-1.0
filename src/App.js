@@ -7,7 +7,7 @@ export default function ShiftApp() {
   const monthDate = `${year}-${String(month).padStart(2, "0")}-01`;
   const days = useMemo(() => new Date(year, month, 0).getDate(), [year, month]);
 
-  // ✅ 表示順：16日スタート（16..月末, 1..15）
+  // 16日スタート表示
   const displayStartDay = 16;
   const displayOrder = useMemo(() => {
     const arr = [];
@@ -16,7 +16,7 @@ export default function ShiftApp() {
     return arr;
   }, [days]);
 
-  // ✅ ズーム（transformは使わずサイズで表現）
+  // ズーム（transformは使わない）
   const zoomKey = `zoom:${monthDate}`;
   const [zoom, setZoom] = useState(() => {
     const saved = Number(localStorage.getItem(zoomKey) || "1.0");
@@ -26,18 +26,12 @@ export default function ShiftApp() {
     localStorage.setItem(zoomKey, String(zoom));
   }, [zoom, zoomKey]);
 
-  // ✅ 0.3でも成立するように下限を下げる
   const ui = useMemo(() => {
     const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
-
-    const nameCol = Math.round(160 * zoom);
-    const dayCol = Math.round(84 * zoom);
-    const ctlCol = Math.round(90 * zoom);
-
     return {
-      nameCol: clamp(nameCol, 72, 260),
-      dayCol: clamp(dayCol, 34, 160),
-      ctlCol: clamp(ctlCol, 44, 180),
+      nameCol: clamp(Math.round(160 * zoom), 72, 260),
+      dayCol: clamp(Math.round(84 * zoom), 34, 160),
+      ctlCol: clamp(Math.round(90 * zoom), 44, 180),
       cellH: clamp(Math.round(70 * zoom), 26, 150),
       font: clamp(Math.round(14 * zoom), 9, 20),
       pad: clamp(Math.round(8 * zoom), 2, 16),
@@ -45,23 +39,18 @@ export default function ShiftApp() {
     };
   }, [zoom]);
 
-  // 行数をブラウザに保存（行を空白にしても詰めない）
   const rowCountKey = `rowCount:${monthDate}`;
   const initialRowCount = Math.max(5, Number(localStorage.getItem(rowCountKey) || "5"));
-
   const makeEmptyRow = () => ({ name: "", days: Array(days).fill("") });
 
   const [rowCount, setRowCount] = useState(initialRowCount);
   const [rows, setRows] = useState(
-    Array(initialRowCount)
-      .fill(0)
-      .map(() => makeEmptyRow())
+    Array(initialRowCount).fill(0).map(() => makeEmptyRow())
   );
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  // rowCount保存 + rowsを増やす（詰めない）
   useEffect(() => {
     localStorage.setItem(rowCountKey, String(rowCount));
     setRows((prev) => {
@@ -70,12 +59,12 @@ export default function ShiftApp() {
       while (next.length < rowCount) next.push(makeEmptyRow());
       return next;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line
   }, [rowCount]);
 
   useEffect(() => {
     loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line
   }, []);
 
   const loadData = async () => {
@@ -94,7 +83,9 @@ export default function ShiftApp() {
       return;
     }
 
-    const maxSlotFromDb = (data || []).reduce((m, x) => Math.max(m, x.row_slot || 0), 0) || 0;
+    const maxSlotFromDb =
+      (data || []).reduce((m, x) => Math.max(m, x.row_slot || 0), 0) || 0;
+
     const finalRowCount = Math.max(5, rowCount, maxSlotFromDb);
 
     const newRows = Array(finalRowCount)
@@ -104,13 +95,12 @@ export default function ShiftApp() {
     for (const item of data || []) {
       const slot = item.row_slot || 0;
       if (slot < 1 || slot > finalRowCount) continue;
-      const rIndex = slot - 1;
 
+      const rIndex = slot - 1;
       if (item.row_name != null) newRows[rIndex].name = item.row_name ?? "";
 
-      const dayNum = item.day ?? 0;
-      if (dayNum >= 1 && dayNum <= days) {
-        newRows[rIndex].days[dayNum - 1] = item.text ?? "";
+      if (item.day >= 1 && item.day <= days) {
+        newRows[rIndex].days[item.day - 1] = item.text ?? "";
       }
     }
 
@@ -119,31 +109,31 @@ export default function ShiftApp() {
     setLoading(false);
   };
 
-  const handleNameChange = (rowIndex, value) => {
+  const handleNameChange = (i, v) => {
     setRows((prev) => {
       const next = [...prev];
-      next[rowIndex] = { ...next[rowIndex], name: value };
+      next[i] = { ...next[i], name: v };
       return next;
     });
   };
 
-  const handleChange = (rowIndex, realDayIndex, value) => {
+  const handleChange = (r, d, v) => {
     setRows((prev) => {
       const next = [...prev];
-      next[rowIndex] = { ...next[rowIndex] };
-      const dayArr = [...next[rowIndex].days];
-      dayArr[realDayIndex] = value;
-      next[rowIndex].days = dayArr;
+      next[r] = { ...next[r] };
+      const dayArr = [...next[r].days];
+      dayArr[d] = v;
+      next[r].days = dayArr;
       return next;
     });
   };
 
   const addRow = () => setRowCount((c) => c + 1);
 
-  const clearRow = (rowIndex) => {
+  const clearRow = (i) => {
     setRows((prev) => {
       const next = [...prev];
-      next[rowIndex] = makeEmptyRow();
+      next[i] = makeEmptyRow();
       return next;
     });
   };
@@ -151,17 +141,12 @@ export default function ShiftApp() {
   const updateAll = async () => {
     setSaving(true);
 
-    const { error: delError } = await supabase.from("schedule").delete().eq("month", monthDate);
-    if (delError) {
-      alert("削除でエラー: " + delError.message);
-      setSaving(false);
-      return;
-    }
+    await supabase.from("schedule").delete().eq("month", monthDate);
 
     const inserts = [];
-    for (let r = 0; r < rows.length; r++) {
-      const name = (rows[r].name || "").trim();
-      if (!name) continue;
+    rows.forEach((row, r) => {
+      const name = (row.name || "").trim();
+      if (!name) return;
 
       inserts.push({
         month: monthDate,
@@ -171,283 +156,206 @@ export default function ShiftApp() {
         text: "",
       });
 
-      for (let d = 0; d < rows[r].days.length; d++) {
-        const text = (rows[r].days[d] || "").trim();
-        if (!text) continue;
+      row.days.forEach((text, d) => {
+        const t = (text || "").trim();
+        if (!t) return;
 
         inserts.push({
           month: monthDate,
           row_slot: r + 1,
           row_name: name,
           day: d + 1,
-          text,
+          text: t,
         });
-      }
-    }
+      });
+    });
 
-    if (inserts.length > 0) {
-      const { error: insError } = await supabase.from("schedule").insert(inserts);
-      if (insError) {
-        alert("登録でエラー: " + insError.message);
-        setSaving(false);
-        return;
-      }
-    }
+    if (inserts.length) await supabase.from("schedule").insert(inserts);
 
     alert("更新しました");
     setSaving(false);
     await loadData();
   };
 
+  // ✅ 全文一致で色固定
+  const textColorMap = useMemo(() => {
+    const palette = [
+      "#E3F2FD",
+      "#E8F5E9",
+      "#FFF3E0",
+      "#F3E5F5",
+      "#E0F7FA",
+      "#FCE4EC",
+      "#F1F8E9",
+      "#EDE7F6",
+      "#FFF8E1",
+      "#ECEFF1",
+    ];
+
+    const uniqueTexts = new Set();
+    rows.forEach((row) => {
+      row.days.forEach((t) => {
+        const s = (t || "").trim();
+        if (s) uniqueTexts.add(s); // ★全文で判定
+      });
+    });
+
+    const map = {};
+    Array.from(uniqueTexts).forEach((text, i) => {
+      map[text] = palette[i % palette.length];
+    });
+
+    return map;
+  }, [rows]);
+
   const zoomPct = Math.round(zoom * 100);
 
   return (
-    <div className="page">
-      <style>{`
-        :root{
-          --border:#cfcfcf;
-          --bg:#ffffff;
-          --bg2:#f1f3f5;
-          --text:#111;
-        }
-        * { box-sizing: border-box; }
-        body { margin:0; color:var(--text); background:var(--bg); }
-        .page { padding: 12px; }
+    <div style={{ padding: 12 }}>
+      <h2>{year}年 {month}月（16日スタート）</h2>
 
-        .topbar {
-          position: sticky;
-          top: 0;
-          z-index: 1000;
-          background: var(--bg);
-          padding: 10px 0 10px 0;
-          border-bottom: 1px solid var(--border);
-        }
-        .titleRow {
-          display:flex;
-          align-items:center;
-          justify-content: space-between;
-          gap: 10px;
-          flex-wrap: wrap;
-        }
-        h2 { margin: 0; font-size: 18px; }
+      <div style={{ marginBottom: 10 }}>
+        <button onClick={updateAll} disabled={saving}>更新</button>
+        <button onClick={addRow} disabled={saving} style={{ marginLeft: 8 }}>
+          ＋行追加
+        </button>
 
-        .actions {
-          display:flex;
-          gap: 8px;
-          align-items:center;
-          flex-wrap: wrap;
-        }
-        button {
-          padding: 10px 12px;
-          border: 1px solid var(--border);
-          background: #f7f7f7;
-          border-radius: 10px;
-          font-size: 14px;
-          cursor: pointer;
-        }
-        button:disabled { opacity: .6; cursor: not-allowed; }
-
-        .hint {
-          font-size: 12px;
-          color: #444;
-          margin-top: 6px;
-          display:flex;
-          gap: 10px;
-          align-items:center;
-          flex-wrap: wrap;
-        }
-
-        .zoomBox{
-          display:flex;
-          gap: 8px;
-          align-items:center;
-          padding: 6px 10px;
-          border: 1px solid var(--border);
-          border-radius: 10px;
-          background: #f7f7f7;
-        }
-        .zoomLabel{ font-size: 12px; color:#333; white-space:nowrap; }
-        .zoomValue{ font-size: 12px; font-weight: 600; width: 44px; text-align:right; }
-
-        /* ✅ 重要：縦横スクロールをこの中で完結させる（stickyが安定する） */
-        .tableWrap {
-          margin-top: 10px;
-          overflow: auto;
-          max-height: 70vh;
-          -webkit-overflow-scrolling: touch;
-          border: 1px solid var(--border);
-          border-radius: 12px;
-          background: var(--bg);
-        }
-
-        table {
-          border-collapse: separate; /* ✅ sticky安定 */
-          border-spacing: 0;
-          width: max-content;
-          min-width: 100%;
-          font-size: ${ui.font}px;
-        }
-
-        th, td {
-          border-right: 1px solid var(--border);
-          border-bottom: 1px solid var(--border);
-          padding: 0;
-          vertical-align: top;
-          background: var(--bg);
-        }
-        /* 左端と上端の線 */
-        table tr > *:first-child { border-left: 1px solid var(--border); }
-        thead tr:first-child > * { border-top: 1px solid var(--border); }
-
-        /* ✅ 日付ヘッダー（追従） */
-        thead th {
-          position: sticky;
-          top: 0;               /* ← tableWrap内で固定 */
-          z-index: 20;
-          background: var(--bg2);
-          font-weight: 700;
-          text-align: center;
-        }
-
-        /* ✅ 名前列（追従） */
-        .nameHeader, .nameCell {
-          position: sticky;
-          left: 0;
-          z-index: 30;
-          background: var(--bg2);
-        }
-        .nameCell { background: var(--bg); z-index: 40; } /* ← 日付より手前に */
-
-        /* ✅ 左上（名前ヘッダー）は最前面 */
-        .nameHeader { z-index: 60; }
-
-        .nameCol { width: ${ui.nameCol}px; min-width: ${ui.nameCol}px; max-width: ${ui.nameCol}px; }
-        .dayCol  { width: ${ui.dayCol}px;  min-width: ${ui.dayCol}px; }
-        .ctlCol  { width: ${ui.ctlCol}px;  min-width: ${ui.ctlCol}px; }
-
-        .nameInput {
-          width: 100%;
-          border: none;
-          outline: none;
-          padding: ${ui.pad}px;
-          font-size: ${ui.inputFont}px;
-          background: transparent;
-        }
-
-        .cellArea {
-          width: 100%;
-          height: ${ui.cellH}px;
-          border: none;
-          outline: none;
-          resize: none;
-          padding: ${ui.pad}px;
-          font-size: ${ui.inputFont}px;
-          background: transparent;
-        }
-
-        .ctlBtn {
-          width: 100%;
-          border: none;
-          background: transparent;
-          padding: 10px 8px;
-          font-size: ${Math.max(8, ui.font - 1)}px;
-          cursor: pointer;
-        }
-
-        .loading { padding: 14px 6px; }
-
-        @media (max-width: 768px) {
-          .page { padding: 10px; }
-          h2 { font-size: 16px; }
-          button { padding: 12px 14px; font-size: 15px; }
-          .tableWrap { max-height: 72vh; }
-        }
-      `}</style>
-
-      <div className="topbar">
-        <div className="titleRow">
-          <h2>
-            {year}年 {month}月（16日スタート）
-          </h2>
-
-          <div className="actions">
-            <button onClick={updateAll} disabled={loading || saving}>
-              更新
-            </button>
-            <button onClick={addRow} disabled={loading || saving}>
-              ＋行追加
-            </button>
-          </div>
-        </div>
-
-        <div className="hint">
-          <span>表の中を縦横スクロールできます。</span>
-
-          <span className="zoomBox">
-            <span className="zoomLabel">表示倍率</span>
-            <input
-              type="range"
-              min="0.3"
-              max="1.2"
-              step="0.05"
-              value={zoom}
-              onChange={(e) => setZoom(Number(e.target.value))}
-            />
-            <span className="zoomValue">{zoomPct}%</span>
-            <button type="button" onClick={() => setZoom(0.3)} style={{ padding: "6px 10px" }}>
-              30%
-            </button>
-            <button type="button" onClick={() => setZoom(1.0)} style={{ padding: "6px 10px" }}>
-              100%
-            </button>
-          </span>
-        </div>
+        <span style={{ marginLeft: 20 }}>表示倍率 {zoomPct}%</span>
+        <input
+          type="range"
+          min="0.3"
+          max="1.2"
+          step="0.05"
+          value={zoom}
+          onChange={(e) => setZoom(Number(e.target.value))}
+        />
       </div>
 
       {loading ? (
-        <div className="loading">読み込み中...</div>
+        <div>読み込み中...</div>
       ) : (
-        <div className="tableWrap">
-          <table>
+        <div
+          style={{
+            overflow: "auto",
+            maxHeight: "70vh",
+            border: "1px solid #ccc",
+          }}
+        >
+          <table
+            style={{
+              borderCollapse: "separate",
+              borderSpacing: 0,
+              width: "max-content",
+              minWidth: "100%",
+              fontSize: ui.font,
+            }}
+          >
             <thead>
               <tr>
-                <th className="nameHeader nameCol">名前</th>
+                <th
+                  style={{
+                    position: "sticky",
+                    top: 0,
+                    left: 0,
+                    zIndex: 60,
+                    background: "#f1f3f5",
+                    width: ui.nameCol,
+                  }}
+                >
+                  名前
+                </th>
+
                 {displayOrder.map((day) => (
-                  <th key={day} className="dayCol">
+                  <th
+                    key={day}
+                    style={{
+                      position: "sticky",
+                      top: 0,
+                      zIndex: 20,
+                      background: "#f1f3f5",
+                      width: ui.dayCol,
+                    }}
+                  >
                     {day}
                   </th>
                 ))}
-                <th className="ctlCol">操作</th>
+
+                <th
+                  style={{
+                    position: "sticky",
+                    top: 0,
+                    zIndex: 20,
+                    background: "#f1f3f5",
+                    width: ui.ctlCol,
+                  }}
+                >
+                  操作
+                </th>
               </tr>
             </thead>
 
             <tbody>
               {rows.map((row, rIndex) => (
                 <tr key={rIndex}>
-                  <td className="nameCell nameCol">
+                  <td
+                    style={{
+                      position: "sticky",
+                      left: 0,
+                      background: "#fff",
+                      zIndex: 40,
+                      width: ui.nameCol,
+                    }}
+                  >
                     <input
-                      className="nameInput"
                       value={row.name}
-                      onChange={(e) => handleNameChange(rIndex, e.target.value)}
-                      placeholder="例：かぼちゃ"
+                      onChange={(e) =>
+                        handleNameChange(rIndex, e.target.value)
+                      }
+                      style={{
+                        width: "100%",
+                        padding: ui.pad,
+                        fontSize: ui.inputFont,
+                        border: "none",
+                        outline: "none",
+                      }}
                     />
                   </td>
 
                   {displayOrder.map((day) => {
                     const realIndex = day - 1;
+                    const value = row.days[realIndex] || "";
+                    const bg = textColorMap[value?.trim()] || "transparent";
+
                     return (
-                      <td key={day} className="dayCol">
+                      <td
+                        key={day}
+                        style={{
+                          width: ui.dayCol,
+                          background: bg,
+                        }}
+                      >
                         <textarea
-                          className="cellArea"
-                          value={row.days[realIndex]}
-                          onChange={(e) => handleChange(rIndex, realIndex, e.target.value)}
+                          value={value}
+                          onChange={(e) =>
+                            handleChange(rIndex, realIndex, e.target.value)
+                          }
+                          style={{
+                            width: "100%",
+                            height: ui.cellH,
+                            padding: ui.pad,
+                            fontSize: ui.inputFont,
+                            border: "none",
+                            outline: "none",
+                            resize: "none",
+                            background: "transparent",
+                          }}
                         />
                       </td>
                     );
                   })}
 
-                  <td className="ctlCol">
-                    <button className="ctlBtn" onClick={() => clearRow(rIndex)}>
+                  <td style={{ width: ui.ctlCol }}>
+                    <button onClick={() => clearRow(rIndex)}>
                       行クリア
                     </button>
                   </td>
